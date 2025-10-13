@@ -1,0 +1,27 @@
+{
+  "name": "consumer",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-timestream-write": "^3.908.0",
+    "@aws-sdk/credential-providers": "^3.908.0",
+    "@hono/node-server": "^1.19.5",
+    "@influxdata/influxdb-client": "^1.35.0",
+    "@types/dotenv": "^8.2.3",
+    "@types/mongoose": "^5.11.97",
+    "dotenv": "^17.2.3",
+    "hono": "^4.9.10",
+    "kafkajs": "^2.2.4",
+    "mongodb": "^6.20.0",
+    "mongoose": "^8.19.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.17",
+    "tsx": "^4.7.1",
+    "typescript": "^5.8.3"
+  }
+}
