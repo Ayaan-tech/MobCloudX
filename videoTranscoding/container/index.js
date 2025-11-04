@@ -15,8 +15,8 @@ export const config = {
     s3Client : new S3Client({
         region: 'us-east-1',
         credentials:({
-            accessKeyId: 'AKIA5O5SA7XNOZPWCCMJ' ,
-            secretAccessKey: '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', 
+             accessKeyId:process.env.AWS_ACCESS_KEY_ID,
+            secretAccessKey:process.env.AWS_SECRET_ACCESS_KEY,
         })
     }),
     honoEndpoint:  "http://host.docker.internal:3001",
