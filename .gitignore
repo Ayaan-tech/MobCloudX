@@ -8,7 +8,7 @@ npm-debug.log
 yarn-error.log
 .idea
 coverage
-
+.env
 # Logs
 logs
 *.log
