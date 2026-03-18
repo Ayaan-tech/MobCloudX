@@ -44,10 +44,11 @@ const reqResTime = new client.Histogram({
 })
 
 app.use(responseTime((req,res,time)=>{
+  const route = (req as Request).path || req.url || 'unknown'
   reqResTime
   .labels({
     method:req.method,
-    route:req.route,
+    route,
     status_code:res.statusCode
   }).observe(time) 
 }))

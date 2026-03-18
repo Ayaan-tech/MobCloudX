@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "MobCloudX Demo",
+    "slug": "mobcloudx",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "mobcloudx",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "android": {
+      "package": "com.mobcloudx.demo",
+      "permissions": [
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.INTERNET"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.mobcloudx.demo",
+      "supportsTablet": true
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "f97fa8d5-9cec-4316-9753-25b0b509cc7a"
+      }
+    },
+    "owner": "ayaan_amjad"
+  }
+}

@@ -1,13 +1,13 @@
 import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import dotenv from 'dotenv'
 dotenv.config()
-if(!process.env.HONO_ENDPOINT || !process.env.BUCKET || !process.env.KEY || !process.env.ProductionBucketName || !process.env.TaskDefinition || !process.env.REGION){
-    throw new Error("Missing required environment variables: HONO_ENDPOINT, BUCKET, KEY, ProductionBucketName, TaskDefinition, REGION must be set.")
+if(!process.env.HONO_ENDPOINT || !process.env.BUCKET || !process.env.KEY || !process.env.ProductionBucketName || !process.env.TaskDefinition || !process.env.Region || !process.env.AccessKey || !process.env.SecretAccessKey){
+    throw new Error("Missing required environment variables: HONO_ENDPOINT, BUCKET, KEY, ProductionBucketName, TaskDefinition, Region, AccessKey, SecretAccessKey must be set.")
 }
 
 export const config = {
     s3Client : new S3Client({
-        region: process.env.REGION!,
+        region: process.env.Region!,
         credentials:({
             accessKeyId:process.env.AccessKey! ,
             secretAccessKey:process.env.SecretAccessKey!

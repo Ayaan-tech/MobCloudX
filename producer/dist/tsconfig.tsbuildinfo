@@ -1,0 +1,1 @@
+{"root":["../src/index.ts","../src/types.ts","../src/config/kafka.config.ts","../src/config/start.services.ts","../src/services/telemetry-service.ts"],"version":"5.9.3"}

@@ -18,11 +18,15 @@ async function connectToMongo():Promise<void>{
     if(mongoose.connection.readyState >= 1) return;
     try {
         console.log(`Connecting to MongoDB at: ${MONGO_URI}`);
-        await mongoose.connect(MONGO_URI);
+        await mongoose.connect(MONGO_URI!);
         const dbInstance = mongoose.connection.db;
+        if (!dbInstance) {
+            throw new Error('MongoDB connection established but db instance is unavailable');
+        }
         await ensureTimeSeriesCollection(dbInstance, TELEMETRY_COLLECTION, 'ts');
         await ensureTimeSeriesCollection(dbInstance, TRANSCODE_COLLECTION, 'ts');
         await ensureTimeSeriesCollection(dbInstance, QOE_COLLECTION, 'ts');
+        await ensureTimeSeriesCollection(dbInstance, 'vmaf_scores', 'ts');
     } catch (error) {
         console.error('Failed to connect to MongoDB:', error);
         throw error;

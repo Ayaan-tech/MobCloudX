@@ -1,0 +1,46 @@
+groups:
+  - name: mobcloudx-alerts
+    rules:
+      - alert: MobCloudXHighCPU
+        expr: |
+          100 * sum by (name) (
+            rate(container_cpu_usage_seconds_total{name=~".*(producer|consumer).*"}[5m])
+          ) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage detected"
+          description: "Container {{ $labels.name }} CPU usage is above 80% for 5m."
+
+      - alert: MobCloudXHighMemory
+        expr: |
+          sum by (name) (
+            container_memory_working_set_bytes{name=~".*(producer|consumer).*"}
+          ) > 1.5e+09
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "Container {{ $labels.name }} memory working set is above 1.5GB for 5m."
+
+      - alert: MobCloudXP95LatencySlaBreach
+        expr: |
+          mobcloudx:http_request_latency_seconds:p95{job=~"producer|consumer"} > 0.5
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "P95 latency SLA breach"
+          description: "Job {{ $labels.job }} route {{ $labels.route }} p95 latency > 500ms for 10m."
+
+      - alert: MobCloudXConsumerLagHigh
+        expr: |
+          kafka_consumer_message_lag_seconds{job="consumer"} > 30
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Consumer lag proxy is high"
+          description: "Consumer topic {{ $labels.topic }} lag proxy is above 30 seconds for 10m."

@@ -123,8 +123,8 @@ export function calculateQualityScore(videoStream:{width: number, height: number
     return score; // Max 100
 }
 
-export function validateVideoQuality(analysis: IAnalysis){
-    const errors = []
+export function validateVideoQuality(analysis: IAnalysis): boolean {
+    const errors: string[] = []
     if(analysis.duration > 7200){
         errors.push(`Video too long: ${Math.round(analysis.duration / 60)} minutes (max 120 minutes)`);
     }
@@ -132,6 +132,9 @@ export function validateVideoQuality(analysis: IAnalysis){
     if(analysis.estimatedQuality < 30){
         errors.push(`Video quality too low: score ${analysis.estimatedQuality}/100`);
     }
-    return true;
+    if (errors.length > 0) {
+        console.warn('Video quality validation failed:', errors.join('; '));
+    }
+    return errors.length === 0;
 }
 

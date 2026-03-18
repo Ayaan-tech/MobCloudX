@@ -17,13 +17,7 @@ export function calculateTranscodingSpeedScore(metrics: TelemetryMetrics[] , tra
 
     
 }
-let messageStats = {
-    telemetry: 0,
-    transcode: 0,
-    qoe: 0,
-    qoe_calculated: 0,
-    errors: 0
-};
+
 
 export function calculateOutputQualityScore(metrics: TelemetryMetrics[], transcodeInfo: TranscodeEvent): number{
     const outputCount = transcodeInfo.outputs?.length || 0;
@@ -94,18 +88,25 @@ export function getQoeCategory(qoe: number): string{
     else return 'Poor';
 }
 
-export function startStatsLogger() {
+export function startStatsLogger(stats: {
+    telemetry: number;
+    transcode: number;
+    qoe: number;
+    qoe_calculated: number;
+    errors: number;
+    [key: string]: number;
+}) {
     setInterval(() => {
-        const total = messageStats.telemetry + messageStats.transcode + messageStats.qoe
+        const total = stats.telemetry + stats.transcode + stats.qoe
         if (total > 0) {
             console.log('\n' + '='.repeat(60))
             console.log('📈 Consumer Statistics')
             console.log('='.repeat(60))
-            console.log(`Telemetry:      ${messageStats.telemetry} messages`)
-            console.log(`Transcode:      ${messageStats.transcode} messages`)
-            console.log(`QoE Received:   ${messageStats.qoe} messages`)
-            console.log(`QoE Calculated: ${messageStats.qoe_calculated} scores`)
-            console.log(`Errors:         ${messageStats.errors}`)
+            console.log(`Telemetry:      ${stats.telemetry} messages`)
+            console.log(`Transcode:      ${stats.transcode} messages`)
+            console.log(`QoE Received:   ${stats.qoe} messages`)
+            console.log(`QoE Calculated: ${stats.qoe_calculated} scores`)
+            console.log(`Errors:         ${stats.errors}`)
             console.log(`Total:          ${total} messages processed`)
             console.log('='.repeat(60) + '\n')
         }

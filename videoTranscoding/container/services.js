@@ -8,24 +8,37 @@ import { Buffer } from 'node:buffer'
 import dotenv from "dotenv"
 
 dotenv.config()
+
+function createS3Client() {
+    const region = process.env.AWS_REGION || 'us-east-1';
+    const hasStaticCreds = Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+
+    if (hasStaticCreds) {
+        return new S3Client({
+            region,
+            credentials: {
+                accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+            },
+        });
+    }
+
+    // Prefer AWS SDK default credential chain (env, IAM role, shared profile).
+    return new S3Client({ region });
+}
+
 export const config = {
-    s3Client : new S3Client({
-        region:  'us-east-1',
-        credentials:({
-            accessKeyId:process.env.AWS_ACCESS_KEY_ID,
-            secretAccessKey:process.env.AWS_SECRET_ACCESS_KEY,
-        })
-    }),
-    honoEndpoint: "http://host.docker.internal:3001",
-    bucket:'video-transcoding-mob.mobcloudx.xyz',
-    key:'videos/video5.mp4',
-    productionBucket: 'prod-video.mobcloudx.xyz',
+    s3Client : createS3Client(),
+    honoEndpoint: process.env.PRODUCER_URL || "http://host.docker.internal:3001",
+    bucket: process.env.S3_BUCKET || 'video-transcoding-mob.mobcloudx.xyz',
+    key: process.env.S3_KEY || 'videos/video5.mp4',
+    productionBucket: process.env.S3_PRODUCTION_BUCKET || 'prod-video.mobcloudx.xyz',
     taskArn: 'arn:aws:ecs:us-east-1:925401939418:task-definition/Task:3',
     containerName:'video-transcoding-container',
     resolutions:[
-    
+        { name: "480p", width: 854, height: 480 },
         { name: "720p", width: 1280, height: 720 },
-     
+        { name: "1080p", width: 1920, height: 1080 },
     ],
     progressInterval: 5000 
 }
@@ -226,5 +239,40 @@ export async function emitTaskComplete(sessionId, outputs, totalDuration) {
             videoKey: config.key,
             outputs: outputs.map(o => o.key)
         }
+    });
+}
+
+export async function emitVMAFScore(sessionId, vmafResult) {
+    if (vmafResult.vmaf_score < 0) {
+        console.warn(`⚠️ VMAF score was ${vmafResult.vmaf_score} — skipping emit`);
+        return;
+    }
+    await postEvent("/telemetry-service", {
+        eventType: "vmaf_score",
+        sessionId,
+        ts: now(),
+        metrics: {
+            vmaf_score: vmafResult.vmaf_score,
+            resolution: vmafResult.resolution,
+            width: vmafResult.width,
+            height: vmafResult.height,
+            model: vmafResult.model || 'vmaf_v0.6.1'
+        },
+        meta: {
+            taskArn: config.taskArn,
+            videoKey: config.key,
+            reference: vmafResult.reference,
+            distorted: vmafResult.distorted
+        }
+    });
+    // Also post to dedicated VMAF topic for consumer/dashboard
+    await postEvent("/vmaf-score", {
+        sessionId,
+        vmaf_score: vmafResult.vmaf_score,
+        resolution: vmafResult.resolution,
+        width: vmafResult.width,
+        height: vmafResult.height,
+        model: vmafResult.model || 'vmaf_v0.6.1',
+        ts: now()
     });
 }

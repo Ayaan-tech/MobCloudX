@@ -16,21 +16,14 @@ if (!Region || !AccessKey || !SecretAccessKey) {
         'Missing required AWS environment variables: Region, AccessKey, and SecretAccessKey must be set.'
     );
 }
-const sqsClient = new SQSClient({ region: Region, credentials: { accessKeyId: AccessKey, secretAccessKey: SecretAccessKey } });
-
-const credentials = {
-    accessKeyId: AccessKey!,
-    secretAccessKey: SecretAccessKey!,
-};
-
-const client = new SQSClient({
-    region: Region!,
-    credentials,
+const sqsClient = new SQSClient({
+    region: Region,
+    credentials: { accessKeyId: AccessKey, secretAccessKey: SecretAccessKey }
 });
 
 const ecsClient = new ECSClient({
     region: Region!,
-    credentials,
+    credentials: { accessKeyId: AccessKey!, secretAccessKey: SecretAccessKey! },
 });
 
 async function init() {

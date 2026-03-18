@@ -1,0 +1,70 @@
+import mongoose, { Schema, Document, Model, connect } from 'mongoose';
+import dotenv from 'dotenv';
+import { MONGO_URI } from '../utils.js';
+import { Collection } from 'mongodb';
+import { TELEMETRY_COLLECTION, TRANSCODE_COLLECTION, QOE_COLLECTION } from '../utils.js';
+export const BaseSchema = new Schema({
+    ts: { type: Date, default: Date.now, required: true },
+    metaData: { type: Schema.Types.Mixed, default: {} },
+}, {
+    timestamps: false,
+    versionKey: false,
+    strict: false
+});
+async function connectToMongo() {
+    if (mongoose.connection.readyState >= 1)
+        return;
+    try {
+        console.log(`Connecting to MongoDB at: ${MONGO_URI}`);
+        await mongoose.connect(MONGO_URI);
+        const dbInstance = mongoose.connection.db;
+        if (!dbInstance) {
+            throw new Error('MongoDB connection established but db instance is unavailable');
+        }
+        await ensureTimeSeriesCollection(dbInstance, TELEMETRY_COLLECTION, 'ts');
+        await ensureTimeSeriesCollection(dbInstance, TRANSCODE_COLLECTION, 'ts');
+        await ensureTimeSeriesCollection(dbInstance, QOE_COLLECTION, 'ts');
+        await ensureTimeSeriesCollection(dbInstance, 'vmaf_scores', 'ts');
+    }
+    catch (error) {
+        console.error('Failed to connect to MongoDB:', error);
+        throw error;
+    }
+}
+async function ensureTimeSeriesCollection(db, name, timeField) {
+    const collections = await db.listCollections({ name: name }).toArray();
+    if (collections.length === 0) {
+        await db.createCollection(name, {
+            timeseries: {
+                timeField: timeField,
+                metaField: 'metaData',
+                granularity: 'seconds',
+            }
+        });
+        console.log(`Created Time Series collection: ${name}`);
+    }
+    else {
+        // Optional: Log a warning if the collection exists but is not time series, 
+        // though Mongoose often handles this fine if schema: {strict: false} is used.
+    }
+}
+export async function writeToMongoMeasurement(model, document) {
+    try {
+        const tsDate = document.ts ? new Date(document.ts) : new Date();
+        const newDoc = new model({
+            ...document,
+            ts: tsDate,
+        });
+        await newDoc.save();
+    }
+    catch (err) {
+        console.error(`Mongoose write error to ${model.collection.collectionName}:`, err);
+    }
+}
+export async function shutdownDBClient() {
+    console.log('Closing Mongoose connection...');
+    if (mongoose.connection.readyState === 1) {
+        await mongoose.disconnect();
+    }
+}
+export { connectToMongo as initDB };

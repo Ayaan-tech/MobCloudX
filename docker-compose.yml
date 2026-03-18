@@ -1,0 +1,211 @@
+# ─────────────────────────────────────────────────────────────
+# MobCloudX — Full Pipeline Orchestration
+# ─────────────────────────────────────────────────────────────
+# Usage:
+#   docker compose up -d            → start all services
+#   docker compose up -d --build    → rebuild & start
+#   docker compose logs -f producer → tail producer logs
+#   docker compose down -v          → tear down (wipe volumes)
+# ─────────────────────────────────────────────────────────────
+
+services:
+  # ── Infrastructure ────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: mcx-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - mcx-network
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: mcx-kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    networks:
+      - mcx-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ── Application Services ──────────────────────────────────
+  producer:
+    build:
+      context: ./producer
+      dockerfile: Dockerfile
+    container_name: mcx-producer
+    ports:
+      - "3001:3001"
+    environment:
+      KAFKA_BROKERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - mcx-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  consumer:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    container_name: mcx-consumer
+    ports:
+      - "3002:3002"
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      MONGO_URI: "mongodb+srv://amjadquasmi_db_user:lOkiYzI0dzIS1tgw@cluster0.6yieivd.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+      MONGO_DB_NAME: test
+    depends_on:
+      kafka:
+        condition: service_healthy
+      producer:
+        condition: service_healthy
+    networks:
+      - mcx-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${CLERK_PK}
+        CLERK_SECRET_KEY: ${CLERK_SK}
+        MONGODB_URI: "mongodb+srv://amjadquasmi_db_user:lOkiYzI0dzIS1tgw@cluster0.6yieivd.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+        DB_NAME: test
+    container_name: mcx-client
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${CLERK_PK}
+      CLERK_SECRET_KEY: ${CLERK_SK}
+      MONGODB_URI: "mongodb+srv://amjadquasmi_db_user:lOkiYzI0dzIS1tgw@cluster0.6yieivd.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+      DB_NAME: test
+      NEXT_PUBLIC_API_URL: http://localhost:3000
+    networks:
+      - mcx-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  inference:
+    build:
+      context: ./inference
+      dockerfile: Dockerfile
+    container_name: mcx-inference
+    ports:
+      - "8000:8000"
+    environment:
+      MONGO_URI: "mongodb+srv://amjadquasmi_db_user:lOkiYzI0dzIS1tgw@cluster0.6yieivd.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+      MONGO_DB: test
+      INFERENCE_PORT: 8000
+      PRODUCER_API_URL: http://mcx-producer:3001
+    depends_on:
+      producer:
+        condition: service_healthy
+    networks:
+      - mcx-network
+    restart: unless-stopped
+    # Inference exposes /health — used by transcoder and any future dependents
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── Transcoding Container ─────────────────────────────────
+  transcoder:
+    build:
+      context: ./videoTranscoding/container
+      dockerfile: Dockerfile
+    container_name: mcx-transcoder
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-video-transcoding-mob.mobcloudx.xyz}
+      S3_KEY: ${S3_KEY:-videos/video5.mp4}
+      RESOLUTIONS: ${RESOLUTIONS:-480p,720p,1080p}
+      PRODUCER_URL: http://mcx-producer:3001
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      S3_PRODUCTION_BUCKET: ${S3_PRODUCTION_BUCKET:-prod-video.mobcloudx.xyz}
+    volumes:
+      - ./realesgran/results:/app/enhanced
+    depends_on:
+      producer:
+        condition: service_healthy
+    networks:
+      - mcx-network
+
+  # ── Observability ────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: mcx-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability-task/prometheus.yaml:/etc/prometheus/prometheus.yml
+    networks:
+      - mcx-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.1
+    container_name: mcx-grafana
+    ports:
+      - "3003:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./grafana/qoe-dashboard.json:/var/lib/grafana/dashboards/qoe-dashboard.json
+      - ./grafana/dashboards/default.yml:/etc/grafana/provisioning/dashboards/default.yml
+      - ./grafana/datasources/mongodb.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml
+    depends_on:
+      - prometheus
+    networks:
+      - mcx-network
+    restart: unless-stopped
+
+networks:
+  mcx-network:
+    driver: bridge

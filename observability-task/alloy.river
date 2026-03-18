@@ -1,0 +1,59 @@
+// 1. Define Prometheus Remote Write Endpoint (Receiver)
+// This service receives the metrics from the mapper and pushes them to Prometheus
+prometheus.remote_write "local_prom" {
+  // Use the service name defined in docker-compose
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+// 2. Define Kafka Receiver (Source)
+kafka.receiver "telemetry_events" {
+  // Use the service name of your Kafka broker
+  brokers = ["kafka:9092"] 
+  topics = ["telemetry.raw", "qoe.scores"]
+  group_id = "alloy_transcoder_processor"
+}
+
+// 3. JSON Processor (Mapper): Convert JSON payload to Prometheus metrics
+json.to_prometheus "metric_mapper" {
+  input = kafka.receiver.telemetry_events.output
+  
+  // Rule to extract progress metrics (CPU, Memory)
+  rule "extract_progress" {
+    match { eventType = "progress" }
+    metric {
+      name = "transcoder_resource_usage"
+      value = .metrics.cpu_percent
+      labels = { 
+        sessionId = .sessionId, 
+        metric_type = "cpu_percent",
+        resolution = .meta.resolution
+      }
+    }
+    metric {
+      name = "transcoder_resource_usage"
+      value = .metrics.mem_mb
+      labels = { 
+        sessionId = .sessionId, 
+        metric_type = "mem_mb",
+        resolution = .meta.resolution
+      }
+    }
+  }
+
+  // Rule to extract final QoE score (assuming QoeScore event is emitted)
+  rule "extract_qoe" {
+    match { eventType = "qoe_score" } 
+    metric {
+      name = "transcoder_qoe_score"
+      value = .qoe
+      labels = { 
+        sessionId = .sessionId
+      }
+    }
+  }
+  
+  // Forward all created metrics to the remote write endpoint
+  forward_to = [prometheus.remote_write.local_prom.receiver]
+}

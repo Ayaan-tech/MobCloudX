@@ -11,24 +11,36 @@ import { emitDownloadComplete, emitTaskComplete, emitTranscodeFailed, emitTransc
 import { downloadFromS3 } from "./s3.service.js"
 import { analyzeVideoQuality, cleanup, transcodeResolution, transcodeToResolutions } from "./transcode.service.js"
 dotenv.config()
+
+function createS3Client() {
+    const region = process.env.AWS_REGION || 'us-east-1';
+    const hasStaticCreds = Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+
+    if (hasStaticCreds) {
+        return new S3Client({
+            region,
+            credentials: {
+                accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+            },
+        });
+    }
+
+    return new S3Client({ region });
+}
+
 export const config = {
-    s3Client : new S3Client({
-        region: 'us-east-1',
-        credentials:({
-             accessKeyId:process.env.AWS_ACCESS_KEY_ID,
-            secretAccessKey:process.env.AWS_SECRET_ACCESS_KEY,
-        })
-    }),
+    s3Client : createS3Client(),
     honoEndpoint:  "http://host.docker.internal:3001",
     bucket: 'video-transcoding-mob.mobcloudx.xyz',
     key: 'videos/video5.mp4',
-    productionBucket: 'prod-video.mobcloudx.xyz',
+    productionBucket: process.env.S3_PRODUCTION_BUCKET || 'prod-video.mobcloudx.xyz',
     taskArn: 'arn:aws:ecs:us-east-1:925401939418:task-definition/Task:3',
     containerName: 'video-transcoding-container',
     resolutions:[
-
+        { name: "480p", width: 854, height: 480 },
         { name: "720p", width: 1280, height: 720 },
- 
+        { name: "1080p", width: 1920, height: 1080 },
     ],
     progressInterval: 5000 
 }
@@ -145,6 +157,15 @@ async function runTranscodingPipeline(){
         downloadResult.downloadDuration,
         Math.round(downloadResult.size / 1024 / 1024)
        );
+       
+       // Verify file exists before analyzing
+       try {
+           await fs.access(downloadResult.path);
+           console.log(`✓ File exists at: ${downloadResult.path}`);
+       } catch (error) {
+           throw new Error(`Downloaded file not found at: ${downloadResult.path}`);
+       }
+       
        console.log("\n🔍 Analyzing video quality...");
        const analysis = await analyzeVideoQuality(downloadResult.path)
        console.log("Video Analysis:");

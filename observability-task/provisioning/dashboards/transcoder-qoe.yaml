@@ -1,0 +1,9 @@
+apiVersion: 1
+providers:
+  - name: 'QoE Metrics Dashboard'
+    orgId: 1
+    folder: ''
+    type: file
+    # CRITICAL: This path points to the directory containing the actual JSON file(s)
+    options:
+      path: /etc/grafana/provisioning/dashboards

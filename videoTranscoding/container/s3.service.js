@@ -9,24 +9,36 @@ import dotenv from "dotenv"
 
 
 dotenv.config()
+
+function createS3Client() {
+    const region = process.env.AWS_REGION || 'us-east-1';
+    const hasStaticCreds = Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+
+    if (hasStaticCreds) {
+        return new S3Client({
+            region,
+            credentials: {
+                accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+            },
+        });
+    }
+
+    return new S3Client({ region });
+}
+
 export const config = {
-    s3Client : new S3Client({
-        region: 'us-east-1',
-        credentials:({
-          accessKeyId:process.env.AWS_ACCESS_KEY_ID,
-            secretAccessKey:process.env.AWS_SECRET_ACCESS_KEY,
-        })
-    }),
+    s3Client : createS3Client(),
     honoEndpoint: "http://host.docker.internal:3001",
     bucket:'video-transcoding-mob.mobcloudx.xyz',
     key:'videos/video5.mp4',
-    productionBucket: 'prod-video.mobcloudx.xyz',
+    productionBucket: process.env.S3_PRODUCTION_BUCKET || 'prod-video.mobcloudx.xyz',
     taskArn: 'arn:aws:ecs:us-east-1:925401939418:task-definition/Task:3',
     containerName:'video-transcoding-container',
     resolutions:[
-
+        { name: "480p", width: 854, height: 480 },
         { name: "720p", width: 1280, height: 720 },
-       
+        { name: "1080p", width: 1920, height: 1080 },
     ],
     progressInterval: 5000 
 }
@@ -78,10 +90,16 @@ export async function downloadFromS3(){
         Bucket:config.bucket,
         Key:config.key
     })
+    
+    console.log(`📥 Downloading from S3...`);
+    console.log(`   Bucket: ${config.bucket}`);
+    console.log(`   Key: ${config.key}`);
+    
     const result = await config.s3Client.send(command)
     if(!result.Body) throw new Error('S3 Download Failed: result.Body is missing from GetObjectCommand response.');
+    
     const readableStream = result.Body;
-    const outputPath = `original-${now()}.mp4`
+    const outputPath = `/app/original-${now()}.mp4`
 
     //Streams to chunk for efficient loading in S3 i.e Parallel Processing 
     const chunks = []
@@ -89,6 +107,9 @@ export async function downloadFromS3(){
         chunks.push(chunk)
     }
     const buffer = Buffer.concat(chunks);
+    
+    console.log(`   Buffer size: ${buffer.length} bytes`);
+    
     await fs.writeFile(outputPath, buffer);
     
     const stats = await fs.stat(outputPath);
@@ -97,9 +118,25 @@ export async function downloadFromS3(){
     console.log(`✓ Downloaded to: ${outputPath}`);
     console.log(`  Size: ${Math.round(stats.size / 1024 / 1024)} MB`);
     console.log(`  Duration: ${Math.round(downloadDuration / 1000)}s`);
+    
+    // Verify the file is a valid video by checking magic bytes
+    const fileBuffer = await fs.readFile(outputPath);
+    const magicBytes = fileBuffer.slice(0, 12).toString('hex');
+    console.log(`  Magic bytes: ${magicBytes}`);
+    
+    // Check for common video file signatures
+    const isValidVideo = 
+        magicBytes.startsWith('000000') && (magicBytes.includes('66747970') || magicBytes.includes('6d646174')) || // MP4
+        magicBytes.startsWith('1a45dfa3') || // MKV
+        magicBytes.startsWith('52494646'); // AVI
+    
+    if (!isValidVideo) {
+        console.warn(`⚠️  Warning: Downloaded file may not be a valid video file`);
+        console.warn(`   Expected MP4 signature (starts with 000000...ftyp), got: ${magicBytes}`);
+    }
 
     return {
-        path:path.resolve(outputPath),
+        path:outputPath,
         size:stats.size,
         downloadDuration
     }
@@ -112,7 +149,9 @@ export async function uploadToS3(localPath, s3Key){
     const command = new PutObjectCommand({
         Bucket: config.productionBucket,
         Key: s3Key,
-        Body: fileData
+        Body: fileData,
+        ContentType: 'video/mp4',
+        ACL: 'public-read',
     });
     
     await config.s3Client.send(command);

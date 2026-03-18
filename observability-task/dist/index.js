@@ -13,6 +13,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
+const response_time_1 = __importDefault(require("response-time"));
 const prom_client_1 = __importDefault(require("prom-client"));
 const app = (0, express_1.default)();
 const PORT = 3000;
@@ -44,6 +45,21 @@ app.get("/heavy", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
             error: message,
         });
     }
+}));
+const reqResTime = new prom_client_1.default.Histogram({
+    name: "http_express_req_res_time",
+    help: "Time taken to process the request",
+    labelNames: ["method", "route", "status_code"],
+    buckets: [0.1, 0.5, 1, 2.5, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000]
+});
+app.use((0, response_time_1.default)((req, res, time) => {
+    const route = req.path || req.url || 'unknown';
+    reqResTime
+        .labels({
+        method: req.method,
+        route,
+        status_code: res.statusCode
+    }).observe(time);
 }));
 app.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);

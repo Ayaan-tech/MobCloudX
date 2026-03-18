@@ -1,0 +1,10 @@
+app/player.tsx(93,25): error TS2339: Property 'replace' does not exist on type 'MobCloudXPlayerRef'.
+app/player.tsx(178,17): error TS2322: Type '{ uri: string; type: "other"; }' is not assignable to type 'VideoSource'.
+  Types of property 'type' are incompatible.
+    Type '"other"' is not assignable to type '"mp4" | "hls" | "dash" | undefined'.
+src/video/player.tsx(215,11): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: VideoViewProps): VideoView', gave the following error.
+    Type '"contain" | "cover" | "stretch"' is not assignable to type 'VideoContentFit | undefined'.
+      Type '"stretch"' is not assignable to type 'VideoContentFit | undefined'.
+  Overload 2 of 2, '(props: VideoViewProps, context: any): VideoView', gave the following error.
+    Type '"contain" | "cover" | "stretch"' is not assignable to type 'VideoContentFit | undefined'.
