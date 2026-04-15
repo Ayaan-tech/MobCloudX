@@ -20,4 +20,6 @@ coverage
 .env
 # Logs
 logs
+/ml/webrtc/data/webrtc_synthetic_20k.h5
+webrtc_synthetic_20k.h5
 *.log
