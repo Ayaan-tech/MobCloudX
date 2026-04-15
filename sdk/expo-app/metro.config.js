@@ -2,6 +2,7 @@ const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
 const config = getDefaultConfig(__dirname);
+config.resolver.assetExts = [...config.resolver.assetExts, 'onnx'];
 
 // __dirname = mobCloudX/sdk/expo-app
 // workspaceRoot = mobCloudX/sdk  (one level up, not two)

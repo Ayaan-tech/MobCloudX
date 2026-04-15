@@ -1,0 +1,278 @@
+{
+  "id": null,
+  "uid": "mobcloudx-webrtc",
+  "title": "MobCloudX WebRTC QoE",
+  "tags": ["mobcloudx", "webrtc", "qoe"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "editable": true,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "session_id",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus-default"
+        },
+        "definition": "label_values(webrtcqoe_rtt_gauge, session_id)",
+        "query": {
+          "query": "label_values(webrtcqoe_rtt_gauge, session_id)",
+          "refId": "sessionVar"
+        },
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {
+          "selected": false,
+          "text": "None",
+          "value": ""
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Per-Participant QoE Score",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-default"
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, participant_id) (rate(webrtcqoe_score_histogram_bucket{session_id=\"$session_id\"}[5m])))",
+          "legendFormat": "{{participant_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "green", "value": 75 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "heatmap",
+      "title": "RTT Heatmap",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-default"
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "webrtcqoe_rtt_gauge{session_id=\"$session_id\"}",
+          "legendFormat": "{{participant_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 200 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Bandwidth %",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-default"
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * avg(webrtcqoe_quality_limitation_reason_gauge{session_id=\"$session_id\",reason=\"bandwidth\"})"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "CPU %",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-default"
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 4, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * avg(webrtcqoe_quality_limitation_reason_gauge{session_id=\"$session_id\",reason=\"cpu\"})"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "None %",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-default"
+      },
+      "gridPos": { "h": 6, "w": 4, "x": 8, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * avg(webrtcqoe_quality_limitation_reason_gauge{session_id=\"$session_id\",reason=\"none\"})"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "logs",
+      "title": "Adaptation Decisions",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 8 },
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{job=\"webrtc_adaptations\", session_id=\"$session_id\"}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Cross-Context FL Convergence",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-default"
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "webrtcqoe_fl_ott_loss",
+          "legendFormat": "OTT Model Loss round {{round_number}}"
+        },
+        {
+          "refId": "B",
+          "expr": "webrtcqoe_fl_webrtc_loss",
+          "legendFormat": "WebRTC Model Loss round {{round_number}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "SR Activation Timeline",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus-default"
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "webrtcqoe_sr_active_gauge",
+          "legendFormat": "{{participant_id}}"
+        },
+        {
+          "refId": "B",
+          "expr": "webrtcqoe_brisque_score{session_id=\"$session_id\"}",
+          "legendFormat": "BRISQUE {{participant_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "BRISQUE.*"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "min",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ]
+  ,
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(16, 185, 129, 1)",
+        "name": "Transfer init point",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        }
+      }
+    ]
+  }
+}

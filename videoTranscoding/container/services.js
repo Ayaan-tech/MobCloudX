@@ -9,6 +9,37 @@ import dotenv from "dotenv"
 
 dotenv.config()
 
+const RESOLUTION_PRESETS = {
+    "240p": { name: "240p", width: 426, height: 240 },
+    "360p": { name: "360p", width: 640, height: 360 },
+    "480p": { name: "480p", width: 854, height: 480 },
+    "720p": { name: "720p", width: 1280, height: 720 },
+    "1080p": { name: "1080p", width: 1920, height: 1080 },
+}
+
+function resolveTargetResolutions() {
+    const requested = (process.env.RESOLUTIONS || "240p,360p,480p,720p,1080p")
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+
+    const resolved = requested
+        .map((key) => RESOLUTION_PRESETS[key])
+        .filter(Boolean)
+
+    if (resolved.length > 0) {
+        return resolved
+    }
+
+    return [
+        RESOLUTION_PRESETS["240p"],
+        RESOLUTION_PRESETS["360p"],
+        RESOLUTION_PRESETS["480p"],
+        RESOLUTION_PRESETS["720p"],
+        RESOLUTION_PRESETS["1080p"],
+    ]
+}
+
 function createS3Client() {
     const region = process.env.AWS_REGION || 'us-east-1';
     const hasStaticCreds = Boolean(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
@@ -35,11 +66,7 @@ export const config = {
     productionBucket: process.env.S3_PRODUCTION_BUCKET || 'prod-video.mobcloudx.xyz',
     taskArn: 'arn:aws:ecs:us-east-1:925401939418:task-definition/Task:3',
     containerName:'video-transcoding-container',
-    resolutions:[
-        { name: "480p", width: 854, height: 480 },
-        { name: "720p", width: 1280, height: 720 },
-        { name: "1080p", width: 1920, height: 1080 },
-    ],
+    resolutions: resolveTargetResolutions(),
     progressInterval: 5000 
 }
 

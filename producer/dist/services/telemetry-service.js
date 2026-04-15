@@ -3,9 +3,25 @@ import { z } from 'zod';
 import { zValidator } from '@hono/zod-validator';
 import { TelemetrySchema, TrancodeEventSchema, QoeSchema, AdaptationDecisionSchema, AdaptationFeedbackSchema, VMAFScoreSchema } from "../types.js";
 import kafkaConfig from "../config/kafka.config.js";
+import redisConfig from "../config/redis.config.js";
+const INFERENCE_URL = process.env.INFERENCE_URL || 'http://inference:8000';
+const ADAPTATION_DECISION_TTL_SECONDS = 300;
+const adaptationDecisionKey = (sessionId) => `adaptation:session:${sessionId}`;
 // In-memory store for latest adaptation decisions per session
-// In production, this would be backed by Redis or MongoDB
+// Redis is the primary store; this map is a safety net if Redis is unavailable.
 const latestDecisions = new Map();
+async function getStoredDecision(sessionId) {
+    const redisDecision = await redisConfig.getJson(adaptationDecisionKey(sessionId));
+    if (redisDecision) {
+        latestDecisions.set(sessionId, redisDecision);
+        return redisDecision;
+    }
+    return latestDecisions.get(sessionId);
+}
+async function storeDecision(sessionId, decision) {
+    latestDecisions.set(sessionId, decision);
+    await redisConfig.setJson(adaptationDecisionKey(sessionId), decision, ADAPTATION_DECISION_TTL_SECONDS);
+}
 const postRoutes = new Hono();
 postRoutes.post('/telemetry-service', zValidator("json", TelemetrySchema), async (c) => {
     const body = await c.req.json();
@@ -54,8 +70,25 @@ postRoutes.post('/qoe-score', zValidator("json", QoeSchema), async (c) => {
  */
 postRoutes.get('/adaptation/decision/:sessionId', async (c) => {
     const sessionId = c.req.param('sessionId');
-    const decision = latestDecisions.get(sessionId);
+    const decision = await getStoredDecision(sessionId);
     if (!decision) {
+        // Auto-compute from inference if no in-memory decision exists.
+        try {
+            const resp = await fetch(`${INFERENCE_URL}/adaptation/decision/compute/${sessionId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            if (resp.ok) {
+                const body = await resp.json();
+                if (body?.decision) {
+                    await storeDecision(sessionId, body.decision);
+                    return c.json(body.decision);
+                }
+            }
+        }
+        catch (error) {
+            console.warn('Inference decision compute failed:', error);
+        }
         return c.json({ ok: false, error: 'no decision available' }, 404);
     }
     return c.json(decision);
@@ -76,7 +109,7 @@ postRoutes.post('/adaptation/decision/:sessionId', zValidator('json', Adaptation
             ts: payload.ts ?? Date.now(),
         };
         // Store latest decision for GET polling
-        latestDecisions.set(sessionId, decision);
+        await storeDecision(sessionId, decision);
         // Publish to Kafka for downstream consumers (logging, analytics)
         await kafkaConfig.sendtoTopic('adaptation.decisions', JSON.stringify(decision));
         return c.json({ ok: true, topic: 'adaptation.decisions', sessionId });

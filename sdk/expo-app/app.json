@@ -19,12 +19,21 @@
       "package": "com.mobcloudx.demo",
       "permissions": [
         "android.permission.ACCESS_NETWORK_STATE",
-        "android.permission.INTERNET"
+        "android.permission.INTERNET",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_CONNECT"
       ]
     },
     "ios": {
       "bundleIdentifier": "com.mobcloudx.demo",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "MobCloudX uses your camera for live WebRTC collaboration calls.",
+        "NSMicrophoneUsageDescription": "MobCloudX uses your microphone for live WebRTC collaboration calls."
+      }
     },
     "extra": {
       "router": {

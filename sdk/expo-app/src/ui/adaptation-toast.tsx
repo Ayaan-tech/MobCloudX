@@ -57,6 +57,15 @@ export function AdaptationToast() {
 }
 
 function formatDecisionText(decision: any): string {
+  if (decision.recommended_action === 'switch_to_cached') {
+    return `Blind-spot mode → ${decision.target_resolution ?? 240}p`;
+  }
+  if (decision.recommended_action === 'prefetch_low_quality') {
+    return `Prefetching low quality (${decision.prefetch_seconds ?? 20}s)`;
+  }
+  if (decision.recommended_action === 'upgrade') {
+    return `Upgrading quality to ${decision.target_resolution ?? 'auto'}p`;
+  }
   if (decision.target_resolution) {
     return `Switching to ${decision.target_resolution}p`;
   }

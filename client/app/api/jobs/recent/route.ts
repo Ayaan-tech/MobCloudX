@@ -20,6 +20,14 @@ interface TranscodeEvent {
   }
 }
 
+interface QoeDocument {
+  sessionId?: string
+  qoe?: number
+  details?: {
+    qoe?: number
+  }
+}
+
 function extractTimestamp(ts: { $date: string } | Date): Date {
   if (ts instanceof Date) {
     return ts
@@ -49,34 +57,17 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${remainingSeconds}s`
 }
 
-function calculateQoE(event: TranscodeEvent): string {
-  // Simple QoE calculation
-  if (event.status === 'FAILED') {
-    return `${(Math.random() * 3 + 2).toFixed(1)}/10`
+function extractQoE(qoeDoc?: QoeDocument | null): string {
+  const rawScore =
+    (typeof qoeDoc?.qoe === 'number' ? qoeDoc.qoe : null) ??
+    (typeof qoeDoc?.details?.qoe === 'number' ? qoeDoc.details.qoe : null)
+
+  if (rawScore === null) {
+    return '—'
   }
-  
-  if (event.status === 'STARTED' || event.status === 'IN_PROGRESS') {
-    return '-'
-  }
-  
-  if (event.status === 'COMPLETED') {
-    if (event.duration_ms) {
-      // Better score for faster completions (under 3 minutes is excellent)
-      const minutes = event.duration_ms / 60000
-      let score = 10
-      
-      if (minutes > 5) score = 8.5
-      else if (minutes > 4) score = 9.0
-      else if (minutes > 3) score = 9.5
-      
-      // Add some randomness
-      score += (Math.random() - 0.5) * 0.5
-      return `${Math.min(10, Math.max(7, score)).toFixed(1)}/10`
-    }
-    return '8.5/10' // Default for completed without duration
-  }
-  
-  return '-'
+
+  const normalized = rawScore > 10 ? rawScore / 10 : rawScore
+  return `${normalized.toFixed(1)}/10`
 }
 
 function extractVideoName(videoKey: string): string {
@@ -110,6 +101,28 @@ export async function GET(request: Request) {
       .limit(limit)
       .toArray() as unknown as TranscodeEvent[]
 
+    const sessionIds = events
+      .map((event) => event.meta?.sessionId)
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+
+    const qoeDocs = sessionIds.length
+      ? await db
+          .collection('qoe_scores')
+          .find(
+            { sessionId: { $in: sessionIds } },
+            { projection: { _id: 0, sessionId: 1, qoe: 1, details: 1, ts: 1 } }
+          )
+          .sort({ ts: -1 })
+          .toArray()
+      : []
+
+    const latestQoeBySession = new Map<string, QoeDocument>()
+    for (const doc of qoeDocs as QoeDocument[]) {
+      if (doc.sessionId && !latestQoeBySession.has(doc.sessionId)) {
+        latestQoeBySession.set(doc.sessionId, doc)
+      }
+    }
+
     // Format for display
     const jobs = events.map(event => {
       const timestamp = extractTimestamp(event.ts)
@@ -123,7 +136,7 @@ export async function GET(request: Request) {
         time: formatTimestamp(timestamp),
         videoKey: extractVideoName(event.videoKey),
         duration: event.duration_ms ? formatDuration(event.duration_ms) : undefined,
-        qoe: calculateQoE(event),
+        qoe: extractQoE(latestQoeBySession.get(sessionId)),
         outputs: event.outputs || [],
         taskArn: event.taskArn
       }

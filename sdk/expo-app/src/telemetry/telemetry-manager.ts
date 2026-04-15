@@ -19,6 +19,8 @@ import { frameCaptureService } from './frame-capture';
 import { useSDKStore } from '../core/store';
 import { logger } from '../core/logger';
 import { offlineQueue } from './offline-queue';
+import { getProducerApiBaseUrl } from '../core/api-config';
+import { computeDemoThrottleEffect } from './demo-throttle';
 
 export class TelemetryManager {
   private config: MobCloudXConfig;
@@ -52,7 +54,7 @@ export class TelemetryManager {
     });
 
     // 4. Initialize API
-    apiService.configure(this.config.apiBaseUrl);
+    apiService.configure(getProducerApiBaseUrl(this.config));
 
     // 4b. Hydrate offline queue + start drain cycle (every 30s)
     await offlineQueue.hydrate();
@@ -106,14 +108,19 @@ export class TelemetryManager {
     useSDKStore.getState().updatePlaybackMetrics(metrics);
   }
 
+  private applyDemoThrottle(network: NetworkInfo, playback: PlaybackMetrics | null) {
+    return computeDemoThrottleEffect(useSDKStore.getState().demoThrottle, network, playback);
+  }
+
   /**
    * Assemble and push telemetry payload to backend.
    */
   private async pushTelemetry(): Promise<void> {
     const store = useSDKStore.getState();
-    const network = store.networkInfo;
     const battery = store.batteryInfo;
-    const playback = store.playbackMetrics;
+    const biased = this.applyDemoThrottle(store.networkInfo, store.playbackMetrics);
+    const network = biased.network;
+    const playback = biased.playback;
 
     const payload: TelemetryPayload = {
       eventType: 'sdk_telemetry',
@@ -133,6 +140,10 @@ export class TelemetryManager {
         cellular_generation: network.cellularGeneration,
         is_connected: network.isConnected,
         signal_strength_dbm: network.signalStrengthDbm,
+        jitter: biased.transient.jitterMs,
+        audio_jitter_ms: biased.transient.jitterMs,
+        audio_packet_loss_pct: biased.transient.packetLossPct,
+        av_sync_offset_ms: biased.transient.avSyncOffsetMs,
 
         // Battery
         battery_level: battery.level,
@@ -157,6 +168,7 @@ export class TelemetryManager {
         sdk_version: '1.0.0',
         mode: store.mode,
         session_duration_ms: Date.now(),
+        ...biased.meta,
       },
     };
 

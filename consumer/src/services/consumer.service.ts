@@ -54,6 +54,71 @@ const consumerMessageLagSeconds = new Gauge({
     registers: [register],
 })
 
+const ottLatestQoeScore = new Gauge({
+    name: 'ott_latest_qoe_score',
+    help: 'Latest computed OTT QoE score',
+    registers: [register],
+})
+
+const ottLatestVmafScore = new Gauge({
+    name: 'ott_latest_vmaf_score',
+    help: 'Latest OTT VMAF score by resolution',
+    labelNames: ['resolution'] as const,
+    registers: [register],
+})
+
+const ottLatestVmafScoreOverall = new Gauge({
+    name: 'ott_latest_vmaf_score_overall',
+    help: 'Latest OTT VMAF score regardless of resolution',
+    registers: [register],
+})
+
+const ottLatestResolutionDurationMs = new Gauge({
+    name: 'ott_latest_transcode_resolution_duration_ms',
+    help: 'Latest OTT transcode duration for each resolution in milliseconds',
+    labelNames: ['resolution'] as const,
+    registers: [register],
+})
+
+const ottLatestJobDurationMs = new Gauge({
+    name: 'ott_latest_transcode_job_duration_ms',
+    help: 'Latest completed OTT transcoding job duration in milliseconds',
+    registers: [register],
+})
+
+const ottLatestOutputCount = new Gauge({
+    name: 'ott_latest_transcode_outputs_count',
+    help: 'Latest number of outputs produced by an OTT transcoding job',
+    registers: [register],
+})
+
+const ottLatestTelemetryCpuPercent = new Gauge({
+    name: 'ott_latest_telemetry_cpu_percent',
+    help: 'Latest CPU percent reported by OTT transcoding telemetry',
+    labelNames: ['resolution'] as const,
+    registers: [register],
+})
+
+const ottLatestTelemetryMemoryMb = new Gauge({
+    name: 'ott_latest_telemetry_memory_mb',
+    help: 'Latest memory usage in MB reported by OTT transcoding telemetry',
+    labelNames: ['resolution'] as const,
+    registers: [register],
+})
+
+const ottTranscodeJobsCompletedTotal = new Counter({
+    name: 'ott_transcode_jobs_completed_total',
+    help: 'Total number of completed OTT transcoding jobs',
+    registers: [register],
+})
+
+const ottTranscodeResolutionCompletedTotal = new Counter({
+    name: 'ott_transcode_resolution_completed_total',
+    help: 'Total number of completed OTT transcode resolution outputs',
+    labelNames: ['resolution'] as const,
+    registers: [register],
+})
+
 function safeParseMessage(value: Buffer | string | null): any | null {
     if (!value) return null
     try {
@@ -158,6 +223,35 @@ async function HandleTelemetryMessage(payload: EachMessagePayload){
         qoeCalculator.addTelemetry(sessionId, metricPayload)
     }
 
+    const telemetryResolution =
+        obj.metrics?.resolution ||
+        obj.meta?.resolution ||
+        'overall'
+
+    if (typeof obj.metrics?.cpu_percent === 'number') {
+        ottLatestTelemetryCpuPercent.set({ resolution: telemetryResolution }, obj.metrics.cpu_percent)
+    }
+
+    if (typeof obj.metrics?.mem_mb === 'number') {
+        ottLatestTelemetryMemoryMb.set({ resolution: telemetryResolution }, obj.metrics.mem_mb)
+    }
+
+    if (obj.eventType === 'transcode_resolution_complete' && typeof obj.metrics?.transcode_duration_ms === 'number') {
+        const resolution = obj.metrics?.resolution || 'unknown'
+        ottLatestResolutionDurationMs.set({ resolution }, obj.metrics.transcode_duration_ms)
+        ottTranscodeResolutionCompletedTotal.inc({ resolution })
+    }
+
+    if (obj.eventType === 'transcode_task_complete') {
+        if (typeof obj.metrics?.total_duration_ms === 'number') {
+            ottLatestJobDurationMs.set(obj.metrics.total_duration_ms)
+        }
+        if (typeof obj.metrics?.total_outputs === 'number') {
+            ottLatestOutputCount.set(obj.metrics.total_outputs)
+        }
+        ottTranscodeJobsCompletedTotal.inc()
+    }
+
     // Also store vmaf_score events in the dedicated vmaf_scores collection
     // and feed into QoE calculator (in case /vmaf-score endpoint was missed)
     if (obj.eventType === 'vmaf_score' && obj.metrics?.vmaf_score != null) {
@@ -176,6 +270,8 @@ async function HandleTelemetryMessage(payload: EachMessagePayload){
         if (vmafDoc.sessionId && vmafDoc.vmaf_score >= 0) {
             qoeCalculator.addVMAFScore(vmafDoc.sessionId, vmafDoc.vmaf_score, vmafDoc.resolution || 'unknown')
         }
+        ottLatestVmafScore.set({ resolution: vmafDoc.resolution || 'unknown' }, vmafDoc.vmaf_score)
+        ottLatestVmafScoreOverall.set(vmafDoc.vmaf_score)
         messageStatics.vmaf += 1;
     }
 }
@@ -219,6 +315,9 @@ async function handleQoeMessage(payload: EachMessagePayload) {
     await writeToMongoMeasurement(QoeModel, obj)
     await createProofFromQoe(obj)
 
+    if (typeof obj.qoe === 'number') {
+        ottLatestQoeScore.set(obj.qoe)
+    }
     messageStatics.qoe += 1;
 }
 
@@ -234,6 +333,8 @@ async function handleVMAFMessage(payload: EachMessagePayload) {
     if (sessionId && obj.vmaf_score >= 0) {
         qoeCalculator.addVMAFScore(sessionId, obj.vmaf_score, obj.resolution)
     }
+    ottLatestVmafScore.set({ resolution: obj.resolution || 'unknown' }, obj.vmaf_score)
+    ottLatestVmafScoreOverall.set(obj.vmaf_score)
     
     messageStatics.vmaf += 1;
 }

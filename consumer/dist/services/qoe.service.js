@@ -1,4 +1,28 @@
 import { calculateCPUEfficiencyScore, calculateTranscodingSpeedScore, stabilityScore, getQoeCategory, calculateMemoryEfficiencyScore, calculateOutputQualityScore } from '../helpers.js';
+function calculateAudioQualityScore(metrics) {
+    const audioMetrics = metrics.filter((m) => typeof m.audio_jitter_ms === 'number' ||
+        typeof m.audio_packet_loss_pct === 'number' ||
+        typeof m.av_sync_offset_ms === 'number');
+    if (audioMetrics.length === 0)
+        return 70;
+    let score = 100;
+    for (const m of audioMetrics) {
+        const jitter = m.audio_jitter_ms ?? 0;
+        const loss = m.audio_packet_loss_pct ?? 0;
+        const avSync = Math.abs(m.av_sync_offset_ms ?? 0);
+        if (jitter > 80)
+            score -= 8;
+        else if (jitter > 40)
+            score -= 4;
+        if (loss > 3)
+            score -= 10;
+        else if (loss > 1)
+            score -= 5;
+        if (avSync > 120)
+            score -= 6;
+    }
+    return Math.max(0, Math.min(100, Math.round(score / audioMetrics.length)));
+}
 export class QoeCalculator {
     sessionMetrics = new Map();
     sessionTranscodeInfo = new Map();
@@ -49,15 +73,18 @@ export class QoeCalculator {
             return null;
         const speedScores = calculateTranscodingSpeedScore(metrics, transcodeInfo, playbackMetric);
         const cpuEfficiencyScores = calculateCPUEfficiencyScore(metrics);
+        const memoryEfficiencyScores = calculateMemoryEfficiencyScore(metrics);
         const outputQualityScores = calculateOutputQualityScore(metrics, transcodeInfo);
         const stabilityScores = stabilityScore(metrics);
+        const audioQualityScore = calculateAudioQualityScore(metrics);
         const weights = {
             transcoding_speed: 0.15,
             cpu_efficiency: 0.15,
             memory_efficiency: 0.10,
             output_quality: 0.15,
             stability: 0.10,
-            vmaf: 0.35 // VMAF gets highest weight — actual perceptual quality
+            audio_quality: 0.10,
+            vmaf: 0.25 // VMAF gets highest weight — actual perceptual quality
         };
         // Get VMAF scores for this session
         const vmafScores = this.sessionVMAFScores.get(sessionId) || [];
@@ -74,12 +101,15 @@ export class QoeCalculator {
             memory_efficiency: 0.15,
             output_quality: 0.25,
             stability: 0.15,
+            audio_quality: 0.10,
             vmaf: 0
         };
         const qoeScore = speedScores * effectiveWeights.transcoding_speed +
             cpuEfficiencyScores * effectiveWeights.cpu_efficiency +
+            memoryEfficiencyScores * effectiveWeights.memory_efficiency +
             outputQualityScores * effectiveWeights.output_quality +
             stabilityScores * effectiveWeights.stability +
+            audioQualityScore * effectiveWeights.audio_quality +
             vmafNormalized * effectiveWeights.vmaf;
         const cpuValues = metrics.map(m => m.cpu_percent).filter((v) => typeof v === 'number');
         const memValues = metrics.map(m => m.mem_mb).filter((v) => typeof v === 'number');
@@ -93,9 +123,10 @@ export class QoeCalculator {
             details: {
                 transcoding_speed_score: Math.round(speedScores * 100) / 100,
                 cpu_efficiency_score: Math.round(cpuEfficiencyScores * 100) / 100,
-                memory_efficiency_score: Math.round(avgMemory * 100) / 100,
+                memory_efficiency_score: Math.round(memoryEfficiencyScores * 100) / 100,
                 output_quality_score: Math.round(outputQualityScores * 100) / 100,
                 stability_score: Math.round(stabilityScores * 100) / 100,
+                audio_quality_score: Math.round(audioQualityScore * 100) / 100,
                 vmaf_score: hasVMAF ? Math.round(avgVMAF * 100) / 100 : null,
                 vmaf_scores_by_resolution: vmafScores.length > 0 ? vmafScores : null,
                 vmaf_included_in_qoe: hasVMAF,

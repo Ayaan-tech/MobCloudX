@@ -8,6 +8,7 @@ import { sessionManager } from './session';
 import { logger } from './logger';
 import { TelemetryManager } from '../telemetry/telemetry-manager';
 import { AdaptationManager } from '../adaptation/adaptation-manager';
+import { getInferenceApiBaseUrl, getProducerApiBaseUrl } from './api-config';
 
 export class MobCloudXSDK {
   private static instance: MobCloudXSDK | null = null;
@@ -39,7 +40,8 @@ export class MobCloudXSDK {
     }
 
     logger.info('Initializing MobCloudX SDK...');
-    logger.info(`API: ${config.apiBaseUrl}`);
+    logger.info(`Producer API: ${getProducerApiBaseUrl(config)}`);
+    logger.info(`Inference API: ${getInferenceApiBaseUrl(config)}`);
     logger.info(`Mode: ${config.mode ?? 'user'}`);
 
     // Initialize store

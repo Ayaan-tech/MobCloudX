@@ -6,6 +6,36 @@
 export { MobCloudXSDK, initMobCloudX, destroyMobCloudX } from './core/sdk';
 export { useSDKStore } from './core/store';
 export { logger } from './core/logger';
+export { SDKProvider, useSDKContext, SDKMode as FoundationSDKMode } from './sdk/core/SDKContext';
+export { KafkaPublisher } from './sdk/core/KafkaPublisher';
+export { WebRTCTelemetryAgent } from './sdk/webrtc/WebRTCTelemetryAgent';
+export { CongestionPredictor } from './sdk/webrtc/CongestionPredictor';
+export { WebRTCAdaptationController } from './sdk/webrtc/WebRTCAdaptationController';
+export { FLWeightsAgent } from './sdk/webrtc/FLWeightsAgent';
+export { ReceiverSRAgent } from './sdk/webrtc/ReceiverSRAgent';
+export { SessionFeedbackCollector } from './sdk/webrtc/SessionFeedbackCollector';
+export { DemoThrottleSimulator } from './sdk/webrtc/DemoThrottleSimulator';
+export { PerformanceProfiler } from './sdk/webrtc/PerformanceProfiler';
+export { WebRTCQoEModel, QoEThresholds, getResolutionLabel, extractQoEFeatureVector } from './sdk/webrtc/WebRTCQoEModel';
+export { WebRTCFSM, FSMState } from './sdk/webrtc/FSM';
+export { EMPTY_WEBRTC_METRICS, EMPTY_QOE_RESULT } from './sdk/webrtc/types';
+export type {
+  AdaptationResult,
+  CongestionPrediction,
+  FLSessionSummaryPayload,
+  FeedbackEvent,
+  SessionFeedback,
+  WebRTCSessionSummary,
+  WebRTCSessionSummaryResponse,
+  ParticipantQoE,
+  WebRTCMetrics,
+  QoEResult,
+  QoEWeights,
+  FSMAction,
+  FSMTransition,
+  NormalisationParams,
+} from './sdk/webrtc/types';
+export { useWebRTCStore, webrtcEventEmitter } from './store/webrtcStore';
 
 // Types
 export type {
@@ -60,3 +90,8 @@ export { apiService } from './services/api.service';
 export { qoeManager, QoEManager } from './qoe';
 export { TelemetryManager } from './telemetry';
 export { AdaptationManager } from './adaptation';
+
+// Screens
+export { default as HomeScreen } from './screens/HomeScreen';
+export { default as CallScreen } from './screens/CallScreen';
+export { default as SessionReplayScreen } from './screens/SessionReplayScreen';

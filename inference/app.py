@@ -11,16 +11,19 @@ import os
 import json
 import uuid
 import hashlib
+import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
+from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
+from inference.webrtc_metrics import render_metrics
 
 load_dotenv()
 
@@ -39,15 +42,48 @@ from contextlib import asynccontextmanager
 
 _client: MongoClient = None  # type: ignore
 _db = None
+_async_client: AsyncIOMotorClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _client, _db
+    global _client, _db, _async_client
     _client = MongoClient(MONGO_URI)
     _db = _client[MONGO_DB]
+    _async_client = AsyncIOMotorClient(MONGO_URI)
+    app.state.mongo_async_client = _async_client
+    app.state.mongo_async_db = _async_client[MONGO_DB]
     print(f"✓ Connected to MongoDB: {MONGO_DB}")
+
+    from inference.db.webrtc_collections import ensure_webrtc_collections
+    from inference.kafka.webrtc_topics import ensure_webrtc_topics, get_webrtc_topic_health
+    from inference.consumers.webrtc_telemetry_consumer import WebRTCTelemetryConsumer
+    from inference.fl.server import FLServer
+
+    await ensure_webrtc_collections(app.state.mongo_async_db)
+    topic_results = await asyncio.to_thread(ensure_webrtc_topics)
+    app.state.webrtc_topic_health = await asyncio.to_thread(get_webrtc_topic_health)
+    print(f"✓ WebRTC Kafka topics ready: {topic_results}")
+
+    app.state.webrtc_consumer = WebRTCTelemetryConsumer(app.state.mongo_async_db)
+    app.state.webrtc_consumer_task = asyncio.create_task(app.state.webrtc_consumer.run())
+    app.state.webrtc_fl_server = FLServer(app.state.mongo_async_db)
+    app.state.webrtc_fl_task = asyncio.create_task(app.state.webrtc_fl_server.start_periodic_webrtc_fl())
     yield
+    consumer = getattr(app.state, "webrtc_consumer", None)
+    consumer_task = getattr(app.state, "webrtc_consumer_task", None)
+    fl_server = getattr(app.state, "webrtc_fl_server", None)
+    fl_task = getattr(app.state, "webrtc_fl_task", None)
+    if consumer is not None:
+        await consumer.stop()
+    if consumer_task is not None:
+        await consumer_task
+    if fl_server is not None:
+        await fl_server.stop()
+    if fl_task is not None:
+        await fl_task
+    if _async_client is not None:
+        _async_client.close()
     if _client:
         _client.close()
 
@@ -74,6 +110,27 @@ try:
     print("✓ FL Bridge router mounted at /fl/*")
 except ImportError as e:
     print(f"⚠ FL Bridge not available: {e}")
+
+try:
+    from inference.routers.webrtc_router import router as webrtc_router
+    app.include_router(webrtc_router, prefix="/api/v1")
+    print("✓ WebRTC router mounted at /api/v1/webrtc/*")
+except ImportError as e:
+    print(f"⚠ WebRTC router not available: {e}")
+
+try:
+    from inference.routers.zk_router import router as zk_router
+    app.include_router(zk_router)
+    print("✓ ZK router mounted at /zk/*")
+except ImportError as e:
+    print(f"⚠ ZK router not available: {e}")
+
+try:
+    from inference.routers.fl_router import router as webrtc_fl_router
+    app.include_router(webrtc_fl_router, prefix="/api/v1")
+    print("✓ WebRTC FL router mounted at /api/v1/fl/webrtc/*")
+except ImportError as e:
+    print(f"⚠ WebRTC FL router not available: {e}")
 
 
 # ── MongoDB helper ────────────────────────────────────────────
@@ -113,6 +170,10 @@ class AdaptationDecisionResponse(BaseModel):
     target_resolution: Optional[int] = None
     target_bitrate: Optional[int] = None
     target_codec: Optional[str] = None
+    congestion_probability: float = 0.0
+    recommended_action: str = "normal"
+    prefetch_seconds: int = 10
+    urgency: str = "normal"
     reason: str
     confidence: float
     ts: int
@@ -183,6 +244,27 @@ def _publish_decision_to_producer(session_id: str, decision: dict) -> bool:
         return False
 
 
+def _normalize_fl_weights(raw_weights) -> dict:
+    defaults = {"buffer_weight": 1.0, "jitter_weight": 1.0, "qoe_weight": 1.0}
+
+    if isinstance(raw_weights, dict):
+        return {
+            "buffer_weight": _num(raw_weights.get("buffer_weight"), defaults["buffer_weight"]),
+            "jitter_weight": _num(raw_weights.get("jitter_weight"), defaults["jitter_weight"]),
+            "qoe_weight": _num(raw_weights.get("qoe_weight"), defaults["qoe_weight"]),
+        }
+
+    if isinstance(raw_weights, list):
+        # WebRTC FL models may store positional weights. Map first 3 indices for adaptation.
+        return {
+            "buffer_weight": _num(raw_weights[0] if len(raw_weights) > 0 else None, defaults["buffer_weight"]),
+            "jitter_weight": _num(raw_weights[1] if len(raw_weights) > 1 else None, defaults["jitter_weight"]),
+            "qoe_weight": _num(raw_weights[2] if len(raw_weights) > 2 else None, defaults["qoe_weight"]),
+        }
+
+    return defaults
+
+
 def _get_fl_weights() -> dict:
     """Load latest FL weights from federated_models. Returns defaults if none exist."""
     try:
@@ -191,10 +273,10 @@ def _get_fl_weights() -> dict:
             sort=[("updated_at", -1)], projection={"_id": 0, "global_weights": 1}
         )
         if model and model.get("global_weights"):
-            return model["global_weights"]
+            return _normalize_fl_weights(model["global_weights"])
     except Exception:
         pass
-    return {"buffer_weight": 1.0, "jitter_weight": 1.0, "qoe_weight": 1.0}
+    return _normalize_fl_weights(None)
 
 
 def _get_throughput_prediction(session_id: str) -> float:
@@ -285,9 +367,50 @@ def _build_decision_from_features(session_id: str, features: dict) -> Adaptation
 
     decision = "maintain"
     target_resolution = None
+    congestion_probability = 0.0
+    recommended_action = "normal"
+    prefetch_seconds = 10
+    urgency = "normal"
     reason = "Stable network and perceptual quality"
     confidence = 0.7
     model_version = "xgb-fl-v1" if lstm_available else "fl-heuristic-v1"
+
+    throughput_risk = 0.0
+    if lstm_available:
+        if predicted_throughput <= 500:
+            throughput_risk = 1.0
+        elif predicted_throughput <= 1200:
+            throughput_risk = 0.82
+        elif predicted_throughput <= 2500:
+            throughput_risk = 0.64
+        elif predicted_throughput <= 5000:
+            throughput_risk = 0.42
+        else:
+            throughput_risk = 0.12
+
+    buffer_risk = 1.0 if buffer_ms < 500 else 0.82 if buffer_ms < 1500 else 0.45 if buffer_ms < 3000 else 0.12
+    jitter_risk = 1.0 if jitter > 120 else 0.72 if jitter > 80 else 0.4 if jitter > 30 else 0.08
+    loss_risk = 1.0 if packet_loss > 5 else 0.65 if packet_loss > 3 else 0.3 if packet_loss > 1 else 0.05
+    qoe_risk = 0.88 if qoe < 40 else 0.65 if qoe < 55 else 0.3 if qoe < 70 else 0.08
+    vmaf_risk = 0.78 if vmaf < 55 else 0.5 if vmaf < 70 else 0.18
+
+    congestion_probability = max(
+        0.0,
+        min(
+            1.0,
+            round(
+                (
+                    buffer_risk * 0.32
+                    + jitter_risk * 0.18
+                    + loss_risk * 0.12
+                    + qoe_risk * 0.16
+                    + vmaf_risk * 0.07
+                    + throughput_risk * 0.15
+                ),
+                3,
+            ),
+        ),
+    )
 
 
     # ── 6-State Context-Aware Decision Logic ───────────────────
@@ -295,7 +418,11 @@ def _build_decision_from_features(session_id: str, features: dict) -> Adaptation
     # State 1: Emergency — imminent rebuffer
     if buffer_ms < 500 or (lstm_available and predicted_throughput < 500):
         decision = "reduce_bitrate"
-        target_resolution = 360
+        target_resolution = 240
+        congestion_probability = max(congestion_probability, 0.92)
+        recommended_action = "switch_to_cached"
+        prefetch_seconds = 30
+        urgency = "critical"
         reason = "Emergency: buffer critical or predicted throughput collapse"
         confidence = 0.95
 
@@ -303,7 +430,11 @@ def _build_decision_from_features(session_id: str, features: dict) -> Adaptation
     elif (buffer_ms < buffer_threshold_low or jitter > jitter_threshold_high
           or packet_loss > 3 or qoe < qoe_threshold_low or vmaf < 65):
         decision = "reduce_bitrate"
-        target_resolution = 480 if (vmaf < 60 or qoe < 45) else 720
+        target_resolution = 360 if (vmaf < 60 or qoe < 45 or congestion_probability > 0.75) else 480
+        congestion_probability = max(congestion_probability, 0.68)
+        recommended_action = "prefetch_low_quality"
+        prefetch_seconds = 20
+        urgency = "warning"
         reason = "Degraded network: FL-tuned thresholds triggered"
         confidence = 0.84 + (0.06 if lstm_available else 0)
 
@@ -313,10 +444,16 @@ def _build_decision_from_features(session_id: str, features: dict) -> Adaptation
         if lstm_available and predicted_throughput > 5000:
             decision = "increase_resolution"
             target_resolution = 720
+            recommended_action = "upgrade"
+            prefetch_seconds = 12
+            urgency = "normal"
             reason = "Recovery: LSTM predicts improving throughput"
             confidence = 0.76
         else:
             decision = "maintain"
+            recommended_action = "normal"
+            prefetch_seconds = 12
+            urgency = "normal"
             reason = "Recovery phase: holding current quality"
             confidence = 0.72
 
@@ -325,6 +462,10 @@ def _build_decision_from_features(session_id: str, features: dict) -> Adaptation
           and packet_loss < 1 and qoe > qoe_threshold_high and vmaf > 85):
         decision = "increase_resolution"
         target_resolution = 1080
+        congestion_probability = min(congestion_probability, 0.2)
+        recommended_action = "upgrade"
+        prefetch_seconds = 10
+        urgency = "normal"
         reason = "HD-Stable: headroom with strong QoE and FL confidence"
         confidence = 0.82 + (0.08 if lstm_available else 0)
 
@@ -332,12 +473,19 @@ def _build_decision_from_features(session_id: str, features: dict) -> Adaptation
     elif lstm_available and predicted_throughput > 50000 and jitter < 10:
         decision = "increase_resolution"
         target_resolution = 1080
+        congestion_probability = min(congestion_probability, 0.12)
+        recommended_action = "upgrade"
+        prefetch_seconds = 10
+        urgency = "normal"
         reason = "Low-latency: LSTM predicts >50Mbps with minimal jitter"
         confidence = 0.88
 
     # State 6: Warm-up / Default — maintain
     else:
         decision = "maintain"
+        recommended_action = "normal"
+        prefetch_seconds = 10
+        urgency = "normal"
         reason = "Warm-up or stable conditions"
         confidence = 0.7
 
@@ -349,6 +497,10 @@ def _build_decision_from_features(session_id: str, features: dict) -> Adaptation
         target_resolution=target_resolution,
         target_bitrate=target_bitrate,
         target_codec=None,
+        congestion_probability=congestion_probability,
+        recommended_action=recommended_action,
+        prefetch_seconds=prefetch_seconds,
+        urgency=urgency,
         reason=reason,
         confidence=confidence,
         ts=int(datetime.utcnow().timestamp() * 1000),
@@ -407,6 +559,36 @@ async def health():
             mongo_connected=False,
             vmaf_collection_count=0,
         )
+
+
+@app.get("/health/webrtc")
+async def webrtc_health():
+    try:
+        topic_health = getattr(app.state, "webrtc_topic_health", {})
+        async_database = getattr(app.state, "mongo_async_db", None)
+        session_collection_count = 0
+        if async_database is not None:
+            session_collection_count = await async_database["webrtc_sessions"].count_documents({})
+
+        return {
+            "status": "ok",
+            "consumer_running": bool(getattr(app.state, "webrtc_consumer_task", None)),
+            "topics": topic_health,
+            "session_collection_count": session_collection_count,
+        }
+    except Exception as exc:
+        return {
+            "status": f"error: {exc}",
+            "consumer_running": False,
+            "topics": {},
+            "session_collection_count": 0,
+        }
+
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    payload, content_type = render_metrics()
+    return Response(content=payload, media_type=content_type)
 
 
 @app.post("/adaptation/decision/compute/{session_id}")

@@ -43,12 +43,13 @@ export async function GET() {
       .toArray();
 
     const qoeScores = qoeDocs.map(d => d.qoe).filter((s): s is number => typeof s === 'number');
-    const qoeAvg = qoeScores.length > 0 ? Math.round((qoeScores.reduce((a, b) => a + b, 0) / qoeScores.length) * 10) / 10 : 0;
+    const qoeAvgRaw = qoeScores.length > 0 ? qoeScores.reduce((a, b) => a + b, 0) / qoeScores.length : 0;
+    const qoeAvg = qoeAvgRaw > 10 ? Math.round((qoeAvgRaw / 10) * 10) / 10 : Math.round(qoeAvgRaw * 10) / 10;
 
     // Telemetry for FL metrics
-    const telemetryDocs = await db.collection('telemetry')
+    const telemetryDocs = await db.collection('telemetry_data')
       .find({})
-      .project({ eventType: 1, metrics: 1, _id: 0 })
+      .project({ eventType: 1, metrics: 1, sessionId: 1, _id: 0 })
       .sort({ ts: -1 })
       .limit(500)
       .toArray();
@@ -56,29 +57,37 @@ export async function GET() {
     // Aggregate FL metrics
     const bufferEvents = telemetryDocs.filter(d => d.eventType === 'buffer_event' || d.metrics?.isBuffering).length;
     const adaptationDecisions = telemetryDocs.filter(d => d.eventType === 'adaptation_decision' || d.eventType === 'resolution_change').length;
-    const sessionIds = new Set(telemetryDocs.map(d => d.metrics?.sessionId).filter(Boolean));
+    const sessionIds = new Set(telemetryDocs.map(d => d.sessionId || d.metrics?.sessionId).filter(Boolean));
     const networkTypes = telemetryDocs.reduce((acc: Record<string, number>, d) => {
       const nt = d.metrics?.networkType || d.metrics?.network_type;
       if (nt) acc[nt] = (acc[nt] || 0) + 1;
       return acc;
     }, {});
+    const fpsValues = telemetryDocs
+      .map(d => d.metrics?.fps)
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    const avgFps = fpsValues.length > 0 ? Math.round((fpsValues.reduce((a, b) => a + b, 0) / fpsValues.length) * 10) / 10 : null;
 
-    // Resolution profiles (static — matches pipeline config)
-    const resolutionProfiles = [
-      { resolution: '480p', width: 854, height: 480, bitrate: '1500k', fps: 30, pipeline: 'Pre-sharp → ESRGAN anime 4× → CAS' },
-      { resolution: '720p', width: 1280, height: 720, bitrate: '3500k', fps: 30, pipeline: 'Pre-sharp → ESRGAN anime 4× → CAS' },
-      { resolution: '1080p', width: 1920, height: 1080, bitrate: '6000k', fps: 30, pipeline: 'Pre-sharp → ESRGAN anime 4× → CAS' },
-    ];
+    const resolutionProfiles = vmafStats
+      .filter(stat => stat.resolution && stat.resolution !== 'unknown')
+      .map(stat => ({
+        resolution: stat.resolution,
+        width: stat.resolution === '1080p' ? 1920 : stat.resolution === '720p' ? 1280 : stat.resolution === '480p' ? 854 : 640,
+        height: stat.resolution === '1080p' ? 1080 : stat.resolution === '720p' ? 720 : stat.resolution === '480p' ? 480 : 360,
+        bitrate: stat.resolution === '1080p' ? '6000k' : stat.resolution === '720p' ? '3500k' : stat.resolution === '480p' ? '1500k' : '800k',
+        fps: avgFps ?? 30,
+        pipeline: 'Pre-sharp → ESRGAN anime 4× → CAS',
+      }));
 
     // Merge VMAF into profiles
     const comparison = resolutionProfiles.map(p => {
       const vmaf = vmafStats.find(v => v.resolution === p.resolution);
       return {
         ...p,
-        vmaf: vmaf?.avg ?? (p.resolution === '1080p' ? 92 : p.resolution === '720p' ? 82 : 68),
-        vmafLabel: getVmafLabel(vmaf?.avg ?? (p.resolution === '1080p' ? 92 : p.resolution === '720p' ? 82 : 68)),
-        qoe: p.resolution === '1080p' ? 85 : p.resolution === '720p' ? 78 : 65,
-        qoeLabel: getQoeLabel(p.resolution === '1080p' ? 85 : p.resolution === '720p' ? 78 : 65),
+        vmaf: vmaf?.avg ?? null,
+        vmafLabel: vmaf?.avg != null ? getVmafLabel(vmaf.avg) : 'Unavailable',
+        qoe: qoeAvg || null,
+        qoeLabel: qoeAvg ? getQoeLabel(qoeAvg * 10) : 'Unavailable',
       };
     });
 
@@ -90,10 +99,10 @@ export async function GET() {
         height: 360,
         bitrate: '325k',
         fps: 29.97,
-        vmaf: 38,
-        vmafLabel: 'Poor',
-        qoe: 52,
-        qoeLabel: 'Laggy',
+        vmaf: null,
+        vmafLabel: 'Baseline',
+        qoe: null,
+        qoeLabel: 'Unavailable',
         pipeline: 'None (raw upload)',
         thumbnail: '/thumbnails/original-360p.jpg',
         preview: 'https://s3.us-east-1.amazonaws.com/video-transcoding-mob.mobcloudx.xyz/videos/input.mp4',
@@ -104,11 +113,11 @@ export async function GET() {
         preview: `/thumbnails/preview-${c.resolution}.mp4`,
       })),
       federatedLearning: {
-        totalSessions: sessionIds.size || 12,
-        bufferEvents: bufferEvents || 3,
-        adaptationDecisions: adaptationDecisions || 7,
-        avgFps: 29.8,
-        networkDistribution: Object.keys(networkTypes).length > 0 ? networkTypes : { wifi: 80, cellular: 20 },
+        totalSessions: sessionIds.size,
+        bufferEvents,
+        adaptationDecisions,
+        avgFps,
+        networkDistribution: networkTypes,
         totalTelemetryEvents: telemetryDocs.length,
       },
       vmafStats,

@@ -25,6 +25,9 @@ import type {
   PlayerState,
   QoEState,
   AdaptationState,
+  ZKProofState,
+  ZKProofRecord,
+  DemoThrottleState,
 } from '../types';
 
 // ── Defaults ─────────────────────────────────────────────────
@@ -54,6 +57,12 @@ const DEFAULT_ADAPTATION: AdaptationState = {
   lastPollTs: 0,
 };
 
+const DEFAULT_ZK_PROOF: ZKProofState = {
+  status: 'idle',
+  latestProof: null,
+  lastUpdated: 0,
+};
+
 const DEFAULT_PLAYER: PlayerState = {
   isPlaying: false,
   isBuffering: false,
@@ -64,12 +73,14 @@ const DEFAULT_PLAYER: PlayerState = {
   volume: 1,
 };
 
+const DEFAULT_DEMO_THROTTLE: DemoThrottleState | null = null;
+
 // ── Helpers ──────────────────────────────────────────────────
 
 function getQoECategory(score: number): QoECategory {
   if (score >= 85) return 'excellent';
-  if (score >= 70) return 'good';
-  if (score >= 50) return 'fair';
+  if (score >= 65) return 'good';
+  if (score >= 40) return 'fair';
   return 'poor';
 }
 
@@ -97,9 +108,11 @@ export const useSDKStore = create<SDKStore>((set, get) => ({
   networkInfo: DEFAULT_NETWORK,
   batteryInfo: DEFAULT_BATTERY,
   playbackMetrics: null,
+  demoThrottle: DEFAULT_DEMO_THROTTLE,
 
   qoe: DEFAULT_QOE,
   adaptation: DEFAULT_ADAPTATION,
+  zkProof: DEFAULT_ZK_PROOF,
   player: DEFAULT_PLAYER,
 
   // ── Actions ──────────────────────────────────────────────
@@ -133,6 +146,9 @@ export const useSDKStore = create<SDKStore>((set, get) => ({
   updatePlaybackMetrics: (metrics: PlaybackMetrics) =>
     set({ playbackMetrics: metrics }),
 
+  updateDemoThrottle: (demoThrottle: DemoThrottleState | null) =>
+    set({ demoThrottle }),
+
   updateQoE: (score: QoEScore) => {
     const { qoe } = get();
     const updatedHistory = [...qoe.history, score].slice(-100); // keep last 100
@@ -159,6 +175,16 @@ export const useSDKStore = create<SDKStore>((set, get) => ({
     });
   },
 
+  updateZKProof: (proof: ZKProofRecord | null, status = proof?.anchor?.status === 'submitted' ? 'anchored' : 'pending') => {
+    set({
+      zkProof: {
+        latestProof: proof,
+        status: proof ? status : 'idle',
+        lastUpdated: Date.now(),
+      },
+    });
+  },
+
   updatePlayerState: (partial: Partial<PlayerState>) => {
     const { player } = get();
     set({ player: { ...player, ...partial } });
@@ -172,8 +198,10 @@ export const useSDKStore = create<SDKStore>((set, get) => ({
       networkInfo: DEFAULT_NETWORK,
       batteryInfo: DEFAULT_BATTERY,
       playbackMetrics: null,
+      demoThrottle: DEFAULT_DEMO_THROTTLE,
       qoe: DEFAULT_QOE,
       adaptation: DEFAULT_ADAPTATION,
+      zkProof: DEFAULT_ZK_PROOF,
       player: DEFAULT_PLAYER,
     }),
 }));

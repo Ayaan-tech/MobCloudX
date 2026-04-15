@@ -11,7 +11,7 @@ import { spawn } from "node:child_process"
 
 
 
-import { uploadToS3 } from "./s3.service.js"
+import { uploadBufferToS3, uploadTextToS3, uploadToS3 } from "./s3.service.js"
 dotenv.config()
 const config = runtimeConfig
 
@@ -299,9 +299,11 @@ async function smoothWithRealESRGAN(videoPath, resolution) {
 export async function transcodeResolution(inputPath, resolution, sessionId) {
     // Per-resolution encoding profiles
     const profiles = {
-        '480p': { crf: 20, bitrate: '1500k', maxrate: '2000k', bufsize: '3000k', sharpW: '3:3:0.4:3:3:0.2', audioBitrate: '128k' },
-        '720p': { crf: 18, bitrate: '3500k', maxrate: '5000k', bufsize: '7000k', sharpW: '5:5:0.6:3:3:0.3', audioBitrate: '192k' },
-        '1080p': { crf: 17, bitrate: '6000k', maxrate: '8000k', bufsize: '12000k', sharpW: '5:5:0.8:3:3:0.4', audioBitrate: '192k' },
+        '240p': { crf: 25, bitrate: '150k', maxrate: '150k', bufsize: '300k', sharpW: '3:3:0.15:3:3:0.08', audioBitrate: '64k', hlsTime: 2 },
+        '360p': { crf: 24, bitrate: '400k', maxrate: '400k', bufsize: '800k', sharpW: '3:3:0.2:3:3:0.1', audioBitrate: '96k', hlsTime: 2 },
+        '480p': { crf: 20, bitrate: '1500k', maxrate: '2000k', bufsize: '3000k', sharpW: '3:3:0.4:3:3:0.2', audioBitrate: '128k', hlsTime: 6 },
+        '720p': { crf: 18, bitrate: '3500k', maxrate: '5000k', bufsize: '7000k', sharpW: '5:5:0.6:3:3:0.3', audioBitrate: '192k', hlsTime: 6 },
+        '1080p': { crf: 17, bitrate: '6000k', maxrate: '8000k', bufsize: '12000k', sharpW: '5:5:0.8:3:3:0.4', audioBitrate: '192k', hlsTime: 6 },
     };
     const profile = profiles[resolution.name] || profiles['720p'];
 
@@ -375,6 +377,9 @@ export async function transcodeResolution(inputPath, resolution, sessionId) {
                     console.log(`[${resolution.name}]   Size: ${Math.round(uploadResult.size / 1024 / 1024)} MB`);
                     console.log(`[${resolution.name}]   Total Time: ${Math.round(totalDuration / 1000)}s`);
 
+                    const hlsResult = await generateAndUploadHlsVariant(outputPath, resolution, profile);
+                    console.log(`[${resolution.name}] ✓ HLS uploaded to s3://${config.productionBucket}/${hlsResult.playlistKey}`);
+
                     await emitResolutionComplete(sessionId, resolution, s3Key, {
                         outputSizeMb: Math.round(uploadResult.size / 1024 / 1024),
                         transcodeDuration: totalDuration - uploadDuration,
@@ -385,17 +390,17 @@ export async function transcodeResolution(inputPath, resolution, sessionId) {
                     // ── VMAF scoring ────────────────────────────────
                     try {
                         console.log(`[${resolution.name}] 🔬 Computing VMAF score...`);
-                        const vmafScore = await computeVMAF(inputPath, outputPath, resolution);
-                        console.log(`[${resolution.name}] ✓ VMAF score: ${vmafScore}`);
+                        const vmafResult = await computeVMAF(inputPath, outputPath, resolution);
+                        console.log(`[${resolution.name}] ✓ VMAF score: ${vmafResult.score} (${vmafResult.model})`);
                         const { emitVMAFScore } = await import('./services.js');
                         await emitVMAFScore(sessionId, {
-                            vmaf_score: vmafScore,
+                            vmaf_score: vmafResult.score,
                             resolution: resolution.name,
                             width: resolution.width,
                             height: resolution.height,
                             reference: path.basename(inputPath),
                             distorted: s3Key,
-                            model: 'vmaf_v0.6.1'
+                            model: vmafResult.model
                         });
                     } catch (vmafErr) {
                         console.warn(`[${resolution.name}] ⚠️ VMAF computation skipped:`, vmafErr.message);
@@ -403,7 +408,8 @@ export async function transcodeResolution(inputPath, resolution, sessionId) {
                         const { emitVMAFScore } = await import('./services.js');
                         const estimatedVmaf = resolution.name === '1080p' ? 92 :
                             resolution.name === '720p' ? 82 :
-                                resolution.name === '480p' ? 68 : 75;
+                                resolution.name === '480p' ? 68 :
+                                    resolution.name === '360p' ? 54 : 42;
                         await emitVMAFScore(sessionId, {
                             vmaf_score: estimatedVmaf,
                             resolution: resolution.name,
@@ -411,7 +417,7 @@ export async function transcodeResolution(inputPath, resolution, sessionId) {
                             height: resolution.height,
                             reference: path.basename(inputPath),
                             distorted: s3Key,
-                            model: 'estimated_heuristic'
+                            model: 'vmaf_heuristic'
                         });
                     }
 
@@ -420,7 +426,8 @@ export async function transcodeResolution(inputPath, resolution, sessionId) {
                         size: uploadResult.size,
                         resolution: resolution.name,
                         duration_ms: totalDuration,
-                        localPath: outputPath
+                        localPath: outputPath,
+                        hls: hlsResult,
                     })
 
                 } catch (error) {
@@ -428,8 +435,12 @@ export async function transcodeResolution(inputPath, resolution, sessionId) {
                     reject(error)
                 }
             })
-            .on('error', (err) => {
+            .on('error', (err, stdout, stderr) => {
                 console.error(`[${resolution.name}] FFmpeg error:`, err);
+                const stderrTail = typeof stderr === 'string' ? stderr.trim().split('\n').slice(-20).join('\n') : '';
+                if (stderrTail) {
+                    console.error(`[${resolution.name}] FFmpeg stderr tail:\n${stderrTail}`);
+                }
                 reject(err)
             })
             .run()
@@ -448,7 +459,10 @@ async function computeVMAF(referencePath, distortedPath, resolution) {
     try {
         const vmafScore = await runVMAFNative(referencePath, distortedPath, resolution);
         console.log(`   [VMAF] Native libvmaf score: ${vmafScore}`);
-        return vmafScore;
+        return {
+            score: vmafScore,
+            model: 'vmaf_native'
+        };
     } catch (vmafErr) {
         console.warn(`   [VMAF] libvmaf unavailable (${vmafErr.message}), falling back to SSIM+PSNR...`);
     }
@@ -460,18 +474,28 @@ async function computeVMAF(referencePath, distortedPath, resolution) {
     ]);
     const estimatedVmaf = ssimPsnrToVmaf(ssim, psnr);
     console.log(`   [VMAF] SSIM=${ssim.toFixed(4)}, PSNR=${psnr.toFixed(2)}dB → estimated VMAF=${estimatedVmaf}`);
-    return estimatedVmaf;
+    return {
+        score: estimatedVmaf,
+        model: 'vmaf_estimated'
+    };
+}
+
+function buildComparisonFilter(resolution, metricFilter) {
+    const normalize = `fps=30,scale=${resolution.width}:${resolution.height}:flags=bicubic:force_original_aspect_ratio=decrease,pad=${resolution.width}:${resolution.height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,setrange=tv,settb=AVTB,setpts=PTS-STARTPTS`;
+    return `[0:v]${normalize}[dist];[1:v]${normalize}[ref];[dist][ref]${metricFilter}`;
 }
 
 /** Native libvmaf via FFmpeg's lavfi filter */
 function runVMAFNative(referencePath, distortedPath, resolution) {
     return new Promise((resolve, reject) => {
         const logPath = `/tmp/vmaf_${resolution.name}.json`;
+        const modelPath = '/app/models/vmaf_v0.6.1.json';
         const args = [
             '-i', distortedPath,
             '-i', referencePath,
             '-lavfi',
-            `[0:v]setpts=PTS-STARTPTS[dist];[1:v]scale=${resolution.width}:${resolution.height}:flags=bicubic,setpts=PTS-STARTPTS[ref];[dist][ref]libvmaf=log_fmt=json:log_path=${logPath}`,
+            buildComparisonFilter(resolution, `libvmaf=log_fmt=json:log_path=${logPath}:model=path=${modelPath}`),
+            '-an',
             '-f', 'null', '-'
         ];
 
@@ -501,7 +525,8 @@ function computeSSIM(referencePath, distortedPath, resolution) {
             '-i', distortedPath,
             '-i', referencePath,
             '-lavfi',
-            `[0:v]setpts=PTS-STARTPTS[dist];[1:v]scale=${resolution.width}:${resolution.height}:flags=bicubic,setpts=PTS-STARTPTS[ref];[dist][ref]ssim`,
+            buildComparisonFilter(resolution, 'ssim'),
+            '-an',
             '-f', 'null', '-'
         ];
 
@@ -525,7 +550,8 @@ function computePSNR(referencePath, distortedPath, resolution) {
             '-i', distortedPath,
             '-i', referencePath,
             '-lavfi',
-            `[0:v]setpts=PTS-STARTPTS[dist];[1:v]scale=${resolution.width}:${resolution.height}:flags=bicubic,setpts=PTS-STARTPTS[ref];[dist][ref]psnr`,
+            buildComparisonFilter(resolution, 'psnr'),
+            '-an',
             '-f', 'null', '-'
         ];
 
@@ -567,6 +593,74 @@ function ssimPsnrToVmaf(ssim, psnr) {
     return Math.round(Math.min(100, Math.max(0, blended)) * 100) / 100;
 }
 
+async function generateAndUploadHlsVariant(localMp4Path, resolution, profile) {
+    const assetBaseName = path.basename(runtimeConfig.key, path.extname(runtimeConfig.key));
+    const hlsDir = `/app/hls-${resolution.name}-${now()}`;
+    const localPlaylistPath = `${hlsDir}/${resolution.name}.m3u8`;
+    const localSegmentPattern = `${hlsDir}/${resolution.name}_%03d.ts`;
+    const hlsPrefix = `${assetBaseName}-hls`;
+    const playlistKey = `${hlsPrefix}/${resolution.name}.m3u8`;
+
+    await fs.mkdir(hlsDir, { recursive: true });
+
+    try {
+        await runCommand('ffmpeg', [
+            '-y',
+            '-i', localMp4Path,
+            '-c:v', 'copy',
+            '-c:a', 'copy',
+            '-start_number', '0',
+            '-hls_time', String(profile.hlsTime ?? 6),
+            '-hls_playlist_type', 'vod',
+            '-hls_list_size', '0',
+            '-hls_segment_filename', localSegmentPattern,
+            localPlaylistPath,
+        ]);
+
+        const entries = (await fs.readdir(hlsDir)).sort();
+        for (const entry of entries) {
+            const fullPath = `${hlsDir}/${entry}`;
+            const s3Key = `${hlsPrefix}/${entry}`;
+            const fileData = await fs.readFile(fullPath);
+            if (entry.endsWith('.m3u8')) {
+                await uploadTextToS3(fileData.toString('utf8'), s3Key, 'application/vnd.apple.mpegurl');
+            } else {
+                await uploadBufferToS3(fileData, s3Key, 'video/mp2t');
+            }
+        }
+
+        return {
+            playlistKey,
+            resolution: resolution.name,
+            bandwidth: Number.parseInt(profile.maxrate.replace('k', ''), 10) * 1000,
+            averageBandwidth: Number.parseInt(profile.bitrate.replace('k', ''), 10) * 1000,
+            codecs: 'avc1.640028,mp4a.40.2',
+        };
+    } finally {
+        await fs.rm(hlsDir, { recursive: true, force: true }).catch(() => { });
+    }
+}
+
+function buildHlsMasterPlaylist(outputs) {
+    const lines = [
+        '#EXTM3U',
+        '#EXT-X-VERSION:3',
+    ];
+
+    for (const output of outputs) {
+        if (!output.hls) continue;
+        const resolution = config.resolutions.find((item) => item.name === output.resolution);
+        if (!resolution) continue;
+
+        lines.push(
+            `#EXT-X-STREAM-INF:BANDWIDTH=${output.hls.bandwidth},AVERAGE-BANDWIDTH=${output.hls.averageBandwidth},RESOLUTION=${resolution.width}x${resolution.height},CODECS="${output.hls.codecs}"`,
+            path.basename(output.hls.playlistKey)
+        );
+    }
+
+    return `${lines.join('\n')}\n`;
+}
+
 export async function transcodeToResolutions(inputPath, sessionId) {
     const results = [];
     for (const resolution of config.resolutions) {
@@ -577,6 +671,14 @@ export async function transcodeToResolutions(inputPath, sessionId) {
         await fs.unlink(outputPath).catch(() => { });
 
         results.push(result);
+    }
+
+    if (results.length > 0) {
+        const assetBaseName = path.basename(runtimeConfig.key, path.extname(runtimeConfig.key));
+        const masterPlaylistKey = `${assetBaseName}-hls/master.m3u8`;
+        const masterPlaylist = buildHlsMasterPlaylist(results);
+        await uploadTextToS3(masterPlaylist, masterPlaylistKey, 'application/vnd.apple.mpegurl');
+        console.log(`✓ Uploaded HLS master playlist to s3://${config.productionBucket}/${masterPlaylistKey}`);
     }
     return results;
 }

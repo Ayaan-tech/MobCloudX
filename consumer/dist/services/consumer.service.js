@@ -1,20 +1,24 @@
 import {} from 'kafkajs';
+import crypto from 'node:crypto';
 import { TOPICS } from '../utils.js';
 import ConsumerConfig from '../config/kafka.consumer.js';
 import { writeToMongoMeasurement } from '../config/db.config.js';
-import { TelemetryModel, TranscodeEventModel, QoeModel, VMAFModel } from '../types.js';
+import { TelemetryModel, TranscodeEventModel, QoeModel, VMAFModel, AdaptationDecisionModel, AdaptationFeedbackModel, ZkProofModel, ZkAuditModel, } from '../types.js';
 import { QoeCalculator } from './qoe.service.js';
 import { getQoeCategory, startStatsLogger } from '../helpers.js';
 import { Gauge, Counter, register } from 'prom-client';
 const qoeCalculator = new QoeCalculator();
 const kafkaConsumer = ConsumerConfig.getConsumer();
 const kafkaProducer = ConsumerConfig.getProducer();
+const pendingQoeSessions = new Set();
 let messageStatics = {
     telemetry: 0,
     transcode: 0,
     qoe: 0,
     qoe_calculated: 0,
     vmaf: 0,
+    adaptation_decisions: 0,
+    adaptation_feedback: 0,
     errors: 0
 };
 const consumerMessagesProcessedTotal = new Counter({
@@ -33,6 +37,61 @@ const consumerMessageLagSeconds = new Gauge({
     name: 'kafka_consumer_message_lag_seconds',
     help: 'Lag proxy based on event timestamp in consumed message',
     labelNames: ['topic'],
+    registers: [register],
+});
+const ottLatestQoeScore = new Gauge({
+    name: 'ott_latest_qoe_score',
+    help: 'Latest computed OTT QoE score',
+    registers: [register],
+});
+const ottLatestVmafScore = new Gauge({
+    name: 'ott_latest_vmaf_score',
+    help: 'Latest OTT VMAF score by resolution',
+    labelNames: ['resolution'],
+    registers: [register],
+});
+const ottLatestVmafScoreOverall = new Gauge({
+    name: 'ott_latest_vmaf_score_overall',
+    help: 'Latest OTT VMAF score regardless of resolution',
+    registers: [register],
+});
+const ottLatestResolutionDurationMs = new Gauge({
+    name: 'ott_latest_transcode_resolution_duration_ms',
+    help: 'Latest OTT transcode duration for each resolution in milliseconds',
+    labelNames: ['resolution'],
+    registers: [register],
+});
+const ottLatestJobDurationMs = new Gauge({
+    name: 'ott_latest_transcode_job_duration_ms',
+    help: 'Latest completed OTT transcoding job duration in milliseconds',
+    registers: [register],
+});
+const ottLatestOutputCount = new Gauge({
+    name: 'ott_latest_transcode_outputs_count',
+    help: 'Latest number of outputs produced by an OTT transcoding job',
+    registers: [register],
+});
+const ottLatestTelemetryCpuPercent = new Gauge({
+    name: 'ott_latest_telemetry_cpu_percent',
+    help: 'Latest CPU percent reported by OTT transcoding telemetry',
+    labelNames: ['resolution'],
+    registers: [register],
+});
+const ottLatestTelemetryMemoryMb = new Gauge({
+    name: 'ott_latest_telemetry_memory_mb',
+    help: 'Latest memory usage in MB reported by OTT transcoding telemetry',
+    labelNames: ['resolution'],
+    registers: [register],
+});
+const ottTranscodeJobsCompletedTotal = new Counter({
+    name: 'ott_transcode_jobs_completed_total',
+    help: 'Total number of completed OTT transcoding jobs',
+    registers: [register],
+});
+const ottTranscodeResolutionCompletedTotal = new Counter({
+    name: 'ott_transcode_resolution_completed_total',
+    help: 'Total number of completed OTT transcode resolution outputs',
+    labelNames: ['resolution'],
     registers: [register],
 });
 function safeParseMessage(value) {
@@ -76,6 +135,38 @@ export async function publishQoeScore(scoreObj) {
         console.error('Failed to publish QoE score', error);
     }
 }
+function hashObject(obj) {
+    return crypto.createHash('sha256').update(JSON.stringify(obj)).digest('hex');
+}
+async function createProofFromQoe(obj) {
+    if (!obj?.sessionId || typeof obj?.qoe !== 'number')
+        return;
+    const ts = obj.ts ?? Date.now();
+    const basePayload = {
+        session_id: obj.sessionId,
+        qoe_score: obj.qoe,
+        ts,
+        details: obj.details ?? {},
+    };
+    const proofDoc = {
+        proof_id: crypto.randomUUID(),
+        proof_hash: hashObject(basePayload),
+        session_hash: hashObject({ session_id: obj.sessionId }),
+        session_id: obj.sessionId,
+        qoe_score: obj.qoe,
+        ts,
+        algorithm: 'sha256-commitment-demo',
+        created_at: new Date().toISOString(),
+    };
+    await writeToMongoMeasurement(ZkProofModel, proofDoc);
+    await writeToMongoMeasurement(ZkAuditModel, {
+        action: 'generate',
+        proof_id: proofDoc.proof_id,
+        proof_hash: proofDoc.proof_hash,
+        verified: true,
+        ts: Date.now(),
+    });
+}
 async function HandleTelemetryMessage(payload) {
     const obj = safeParseMessage(payload.message.value);
     console.log('///////////////////////////////////');
@@ -101,6 +192,29 @@ async function HandleTelemetryMessage(payload) {
         };
         qoeCalculator.addTelemetry(sessionId, metricPayload);
     }
+    const telemetryResolution = obj.metrics?.resolution ||
+        obj.meta?.resolution ||
+        'overall';
+    if (typeof obj.metrics?.cpu_percent === 'number') {
+        ottLatestTelemetryCpuPercent.set({ resolution: telemetryResolution }, obj.metrics.cpu_percent);
+    }
+    if (typeof obj.metrics?.mem_mb === 'number') {
+        ottLatestTelemetryMemoryMb.set({ resolution: telemetryResolution }, obj.metrics.mem_mb);
+    }
+    if (obj.eventType === 'transcode_resolution_complete' && typeof obj.metrics?.transcode_duration_ms === 'number') {
+        const resolution = obj.metrics?.resolution || 'unknown';
+        ottLatestResolutionDurationMs.set({ resolution }, obj.metrics.transcode_duration_ms);
+        ottTranscodeResolutionCompletedTotal.inc({ resolution });
+    }
+    if (obj.eventType === 'transcode_task_complete') {
+        if (typeof obj.metrics?.total_duration_ms === 'number') {
+            ottLatestJobDurationMs.set(obj.metrics.total_duration_ms);
+        }
+        if (typeof obj.metrics?.total_outputs === 'number') {
+            ottLatestOutputCount.set(obj.metrics.total_outputs);
+        }
+        ottTranscodeJobsCompletedTotal.inc();
+    }
     // Also store vmaf_score events in the dedicated vmaf_scores collection
     // and feed into QoE calculator (in case /vmaf-score endpoint was missed)
     if (obj.eventType === 'vmaf_score' && obj.metrics?.vmaf_score != null) {
@@ -118,6 +232,8 @@ async function HandleTelemetryMessage(payload) {
         if (vmafDoc.sessionId && vmafDoc.vmaf_score >= 0) {
             qoeCalculator.addVMAFScore(vmafDoc.sessionId, vmafDoc.vmaf_score, vmafDoc.resolution || 'unknown');
         }
+        ottLatestVmafScore.set({ resolution: vmafDoc.resolution || 'unknown' }, vmafDoc.vmaf_score);
+        ottLatestVmafScoreOverall.set(vmafDoc.vmaf_score);
         messageStatics.vmaf += 1;
     }
 }
@@ -131,7 +247,8 @@ async function handleTranscodeMessage(payload) {
     if (sessionId) {
         console.log(`Transcode event: ${obj.status} for session ${sessionId}`);
         qoeCalculator.addTranscodeEvent(sessionId, obj);
-        if (obj.status === 'COMPLETED') {
+        if (obj.status === 'COMPLETED' && !pendingQoeSessions.has(sessionId)) {
+            pendingQoeSessions.add(sessionId);
             setTimeout(async () => {
                 console.log('Calculating QoE for session', sessionId);
                 const qoeScore = qoeCalculator.calculateQoe(sessionId);
@@ -144,6 +261,7 @@ async function handleTranscodeMessage(payload) {
                 else {
                     console.warn('QoE calculation failed for session', sessionId);
                 }
+                pendingQoeSessions.delete(sessionId);
             }, 5000);
         }
     }
@@ -155,6 +273,10 @@ async function handleQoeMessage(payload) {
     const category = getQoeCategory(obj.qoe);
     console.log(`Received QoE score for session ${obj.sessionId}: ${obj.qoe} (${category})`);
     await writeToMongoMeasurement(QoeModel, obj);
+    await createProofFromQoe(obj);
+    if (typeof obj.qoe === 'number') {
+        ottLatestQoeScore.set(obj.qoe);
+    }
     messageStatics.qoe += 1;
 }
 async function handleVMAFMessage(payload) {
@@ -168,7 +290,23 @@ async function handleVMAFMessage(payload) {
     if (sessionId && obj.vmaf_score >= 0) {
         qoeCalculator.addVMAFScore(sessionId, obj.vmaf_score, obj.resolution);
     }
+    ottLatestVmafScore.set({ resolution: obj.resolution || 'unknown' }, obj.vmaf_score);
+    ottLatestVmafScoreOverall.set(obj.vmaf_score);
     messageStatics.vmaf += 1;
+}
+async function handleAdaptationDecisionMessage(payload) {
+    const obj = safeParseMessage(payload.message.value);
+    if (!obj)
+        return;
+    await writeToMongoMeasurement(AdaptationDecisionModel, obj);
+    messageStatics.adaptation_decisions += 1;
+}
+async function handleAdaptationFeedbackMessage(payload) {
+    const obj = safeParseMessage(payload.message.value);
+    if (!obj)
+        return;
+    await writeToMongoMeasurement(AdaptationFeedbackModel, obj);
+    messageStatics.adaptation_feedback += 1;
 }
 export async function startConsumerServices() {
     console.log('Initializing Kafka connection...');
@@ -178,6 +316,8 @@ export async function startConsumerServices() {
     await kafkaConsumer.subscribe({ topic: TOPICS.TRANSCODE, fromBeginning: false });
     await kafkaConsumer.subscribe({ topic: TOPICS.QOE, fromBeginning: false });
     await kafkaConsumer.subscribe({ topic: TOPICS.VMAF, fromBeginning: false });
+    await kafkaConsumer.subscribe({ topic: TOPICS.ADAPTATION_DECISIONS, fromBeginning: false });
+    await kafkaConsumer.subscribe({ topic: TOPICS.ADAPTATION_FEEDBACK, fromBeginning: false });
     await kafkaConsumer.run({
         eachMessage: async (payload) => {
             const topic = payload.topic;
@@ -193,6 +333,12 @@ export async function startConsumerServices() {
                 }
                 else if (topic === TOPICS.VMAF) {
                     await handleVMAFMessage(payload);
+                }
+                else if (topic === TOPICS.ADAPTATION_DECISIONS) {
+                    await handleAdaptationDecisionMessage(payload);
+                }
+                else if (topic === TOPICS.ADAPTATION_FEEDBACK) {
+                    await handleAdaptationFeedbackMessage(payload);
                 }
                 else {
                     console.warn('Unknown topic message', topic);
@@ -210,6 +356,6 @@ export async function startConsumerServices() {
             }
         }
     });
-    startStatsLogger();
+    startStatsLogger(messageStatics);
+    console.log('Consumer services fully operational.');
 }
-console.log('Consumer services fully operational.');

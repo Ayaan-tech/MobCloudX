@@ -52,10 +52,10 @@ interface QoESpeedometerProps {
 }
 
 export function QoESpeedometer({ score, category, size = SIZE }: QoESpeedometerProps) {
-  const progress = useSharedValue(score / 10);
+  const progress = useSharedValue(score / 100);
 
   useEffect(() => {
-    progress.value = withTiming(score / 10, {
+    progress.value = withTiming(score / 100, {
       duration: 1000,
       easing: Easing.out(Easing.cubic),
     });
@@ -117,8 +117,8 @@ export function QoESpeedometer({ score, category, size = SIZE }: QoESpeedometerP
         />
 
         {/* Tick marks */}
-        {[0, 2.5, 5, 7.5, 10].map((tick) => {
-          const angle = (tick / 10) * SWEEP;
+        {[0, 25, 50, 75, 100].map((tick) => {
+          const angle = (tick / 100) * SWEEP;
           const outer = polarToCartesian(CX, CY, RADIUS + 8, angle + 180);
           const inner = polarToCartesian(CX, CY, RADIUS - 2, angle + 180);
           return (
@@ -143,7 +143,7 @@ export function QoESpeedometer({ score, category, size = SIZE }: QoESpeedometerP
       {/* Score text */}
       <View style={styles.scoreContainer}>
         <Animated.Text style={[styles.scoreText, scoreTextStyle]}>
-          {score.toFixed(1)}
+          {(score / 10).toFixed(1)}
         </Animated.Text>
       </View>
 

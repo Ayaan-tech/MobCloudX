@@ -10,13 +10,37 @@ interface ResolutionData {
   height: number
   bitrate: string
   fps: number
-  vmaf: number
+  vmaf: number | null
   vmafLabel: string
-  qoe: number
+  qoe: number | null
   qoeLabel: string
   pipeline: string
   thumbnail: string
   preview?: string  // 2s video clip URL (local or S3)
+}
+
+function NullableScoreBadge({
+  label,
+  score,
+  sublabel,
+  colorFn,
+}: {
+  label: string
+  score: number | null
+  sublabel: string
+  colorFn: (s: number) => ReturnType<typeof vmafColor>
+}) {
+  if (score === null) {
+    return (
+      <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl border border-border bg-muted/40">
+        <span className="text-sm font-medium text-muted-foreground">{label}</span>
+        <span className="text-lg font-semibold text-foreground">N/A</span>
+        <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">{sublabel}</span>
+      </div>
+    )
+  }
+
+  return <ScoreBadge label={label} score={score} sublabel={sublabel} colorFn={colorFn} />
 }
 
 interface ComparisonData {
@@ -27,7 +51,7 @@ interface ComparisonData {
     totalSessions: number
     bufferEvents: number
     adaptationDecisions: number
-    avgFps: number
+    avgFps: number | null
     networkDistribution: Record<string, number>
     totalTelemetryEvents: number
   }
@@ -140,8 +164,8 @@ function VideoCard({
       {/* Scores */}
       <div className="p-5 space-y-3">
         <div className="flex gap-3">
-          <ScoreBadge label="VMAF" score={data.vmaf} sublabel={data.vmafLabel} colorFn={vmafColor} />
-          <ScoreBadge label="QoE" score={data.qoe} sublabel={data.qoeLabel} colorFn={qoeColor} />
+          <NullableScoreBadge label="VMAF" score={data.vmaf} sublabel={data.vmafLabel} colorFn={vmafColor} />
+          <NullableScoreBadge label="QoE" score={data.qoe} sublabel={data.qoeLabel} colorFn={qoeColor} />
         </div>
         <p className={`text-sm ${isOriginal ? "text-red-300/80" : "text-emerald-300/80"}`}>
           {isOriginal
@@ -187,7 +211,18 @@ export default function ComparisonSection() {
       }
     }
     fetchData()
+    const interval = setInterval(fetchData, 30000)
+    return () => clearInterval(interval)
   }, [])
+
+  const original = data?.original ?? null
+  const enhancedOptions = data?.enhanced ?? []
+
+  useEffect(() => {
+    if (enhancedOptions.length > 0 && !enhancedOptions.find((e) => e.resolution === selectedRes)) {
+      setSelectedRes(enhancedOptions[0].resolution)
+    }
+  }, [enhancedOptions, selectedRes])
 
   if (loading) {
     return (
@@ -200,22 +235,18 @@ export default function ComparisonSection() {
     )
   }
 
-  // Fallback data if API fails
-  const original: ResolutionData = data?.original ?? {
-    resolution: "360p", width: 640, height: 360, bitrate: "325k", fps: 29.97,
-    vmaf: 38, vmafLabel: "Poor", qoe: 5.2, qoeLabel: "Laggy",
-    pipeline: "None (raw upload)", thumbnail: "/thumbnails/original-360p.jpg",
-    preview: "https://s3.us-east-1.amazonaws.com/video-transcoding-mob.mobcloudx.xyz/videos/input.mp4",
+  if (!original || enhancedOptions.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-96 rounded-2xl border border-dashed border-border bg-muted/20 text-muted-foreground">
+        Comparison assets and quality metrics will appear here once VMAF, QoE, and transcode outputs are available.
+      </div>
+    )
   }
 
-  const enhancedOptions = data?.enhanced ?? [
-    { resolution: "480p", width: 854, height: 480, bitrate: "1500k", fps: 30, vmaf: 68, vmafLabel: "Fair", qoe: 6.5, qoeLabel: "Fair", pipeline: "ESRGAN → CAS", thumbnail: "/thumbnails/enhanced-480p.jpg", preview: "https://s3.us-east-1.amazonaws.com/prod-video.mobcloudx.xyz/video5-480p.mp4" },
-    { resolution: "720p", width: 1280, height: 720, bitrate: "3500k", fps: 30, vmaf: 82, vmafLabel: "Good", qoe: 7.8, qoeLabel: "Good", pipeline: "ESRGAN → CAS", thumbnail: "/thumbnails/enhanced-720p.jpg", preview: "https://s3.us-east-1.amazonaws.com/prod-video.mobcloudx.xyz/video5-720p.mp4" },
-    { resolution: "1080p", width: 1920, height: 1080, bitrate: "6000k", fps: 30, vmaf: 92, vmafLabel: "Excellent", qoe: 8.5, qoeLabel: "Smooth", pipeline: "ESRGAN → CAS", thumbnail: "/thumbnails/enhanced-1080p.jpg", preview: "https://s3.us-east-1.amazonaws.com/prod-video.mobcloudx.xyz/video5-1080p.mp4" },
-  ]
-
-  const selectedEnhanced = enhancedOptions.find(e => e.resolution === selectedRes) ?? enhancedOptions[1]
-  const fl = data?.federatedLearning ?? { totalSessions: 12, bufferEvents: 3, adaptationDecisions: 7, avgFps: 29.8, networkDistribution: { wifi: 80, cellular: 20 }, totalTelemetryEvents: 156 }
+  const selectedEnhanced = enhancedOptions.find(e => e.resolution === selectedRes) ?? enhancedOptions[0]
+  const fl = data?.federatedLearning ?? { totalSessions: 0, bufferEvents: 0, adaptationDecisions: 0, avgFps: 0, networkDistribution: {}, totalTelemetryEvents: 0 }
+  const vmafDelta = original.vmaf !== null && selectedEnhanced.vmaf !== null ? selectedEnhanced.vmaf - original.vmaf : null
+  const qoeDelta = original.qoe !== null && selectedEnhanced.qoe !== null ? selectedEnhanced.qoe - original.qoe : null
 
   return (
     <div className="space-y-8">
@@ -269,11 +300,11 @@ export default function ComparisonSection() {
         <div className="flex items-center gap-3 px-6 py-3 rounded-xl bg-primary/10 border border-primary/20">
           <TrendingUp className="w-5 h-5 text-primary" />
           <span className="text-sm font-medium text-foreground">
-            VMAF improved <span className="text-primary font-bold">+{selectedEnhanced.vmaf - original.vmaf}</span> points
+            VMAF improved <span className="text-primary font-bold">{vmafDelta === null ? "N/A" : `+${vmafDelta.toFixed(1)}`}</span> points
           </span>
           <ArrowRight className="w-4 h-4 text-primary" />
           <span className="text-sm font-medium text-foreground">
-            QoE improved <span className="text-primary font-bold">+{selectedEnhanced.qoe - original.qoe}</span> points
+            QoE improved <span className="text-primary font-bold">{qoeDelta === null ? "N/A" : `+${qoeDelta.toFixed(1)}`}</span> points
           </span>
         </div>
         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-border to-transparent" />
@@ -305,12 +336,12 @@ export default function ComparisonSection() {
                 <td className="px-6 py-3 font-medium text-red-400">{original.resolution} (original)</td>
                 <td className="text-center px-4 py-3">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-500/20 text-red-400 text-xs font-bold">
-                    {original.vmaf}
+                    {original.vmaf ?? "N/A"}
                   </span>
                 </td>
                 <td className="text-center px-4 py-3">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-yellow-500/20 text-yellow-400 text-xs font-bold">
-                    {original.qoe}
+                    {original.qoe ?? "N/A"}
                   </span>
                 </td>
                 <td className="text-center px-4 py-3 text-muted-foreground">{original.bitrate}</td>
@@ -319,8 +350,8 @@ export default function ComparisonSection() {
               </tr>
               {/* Enhanced */}
               {enhancedOptions.map(e => {
-                const vc = vmafColor(e.vmaf)
-                const qc = qoeColor(e.qoe)
+                const vc = e.vmaf !== null ? vmafColor(e.vmaf) : null
+                const qc = e.qoe !== null ? qoeColor(e.qoe) : null
                 const isSelected = e.resolution === selectedRes
                 return (
                   <tr
@@ -335,13 +366,13 @@ export default function ComparisonSection() {
                       {isSelected && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">SELECTED</span>}
                     </td>
                     <td className="text-center px-4 py-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full ${vc.bg} ${vc.text} text-xs font-bold`}>
-                        {e.vmaf}
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full ${vc ? `${vc.bg} ${vc.text}` : "bg-muted text-muted-foreground"} text-xs font-bold`}>
+                        {e.vmaf ?? "N/A"}
                       </span>
                     </td>
                     <td className="text-center px-4 py-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full ${qc.bg} ${qc.text} text-xs font-bold`}>
-                        {e.qoe}
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full ${qc ? `${qc.bg} ${qc.text}` : "bg-muted text-muted-foreground"} text-xs font-bold`}>
+                        {e.qoe ?? "N/A"}
                       </span>
                     </td>
                     <td className="text-center px-4 py-3 text-muted-foreground">{e.bitrate}</td>
@@ -368,8 +399,8 @@ export default function ComparisonSection() {
           <FLMetricCard icon={Smartphone} label="Sessions" value={fl.totalSessions} sublabel="Active devices" />
           <FLMetricCard icon={Activity} label="Buffer Events" value={fl.bufferEvents} sublabel="Rebuffering detected" />
           <FLMetricCard icon={Layers} label="Adaptation Decisions" value={fl.adaptationDecisions} sublabel="Resolution switches" />
-          <FLMetricCard icon={Monitor} label="Avg FPS" value={fl.avgFps} sublabel="Across all sessions" />
-          <FLMetricCard icon={Wifi} label="Network" value={`${fl.networkDistribution.wifi ?? 0}%`} sublabel="WiFi / Cellular split" />
+          <FLMetricCard icon={Monitor} label="Avg FPS" value={fl.avgFps || "N/A"} sublabel="Across all sessions" />
+          <FLMetricCard icon={Wifi} label="Primary Network" value={Object.entries(fl.networkDistribution).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "N/A"} sublabel="Most common connection type" />
         </div>
         <div className="px-6 pb-6">
           <div className="bg-muted/30 rounded-xl p-4 border border-border/50">

@@ -1,4 +1,3 @@
-import { console } from 'inspector';
 import { Kafka, logLevel } from 'kafkajs';
 class KafkaConfig {
     kafka;
@@ -9,7 +8,7 @@ class KafkaConfig {
         this.brokers = process.env.KAFKA_BROKERS || 'localhost:29092';
         this.kafka = new Kafka({
             clientId: 'producer',
-            brokers: [this.brokers],
+            brokers: this.brokers.split(',').map(s => s.trim()),
             logLevel: logLevel.ERROR
         });
         this.producer = this.kafka.producer();

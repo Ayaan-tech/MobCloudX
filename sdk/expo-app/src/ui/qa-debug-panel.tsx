@@ -183,6 +183,10 @@ export function QADebugPanel() {
           <Section title="Adaptation Agent">
             <MetricRow label="Latest Decision" value={latestDecision?.decision ?? 'None'} />
             <MetricRow label="Confidence" value={latestDecision ? `${Math.round(latestDecision.confidence * 100)}%` : 'N/A'} />
+            <MetricRow label="Congestion" value={latestDecision?.congestion_probability != null ? `${Math.round(latestDecision.congestion_probability * 100)}%` : 'N/A'} />
+            <MetricRow label="Action" value={latestDecision?.recommended_action ?? 'N/A'} />
+            <MetricRow label="Urgency" value={latestDecision?.urgency ?? 'N/A'} />
+            <MetricRow label="Prefetch" value={latestDecision?.prefetch_seconds ?? 'N/A'} unit="s" />
             <MetricRow label="Reason" value={latestDecision?.reason ?? 'N/A'} />
             <MetricRow label="Target Res" value={latestDecision?.target_resolution ? `${latestDecision.target_resolution}p` : 'N/A'} />
             <MetricRow label="Model Ver" value={latestDecision?.model_version ?? 'N/A'} />
@@ -199,7 +203,7 @@ export function QADebugPanel() {
                     {new Date(d.ts).toLocaleTimeString()}
                   </Text>
                   <Text style={styles.logDecision}>
-                    {d.decision} → {d.target_resolution}p ({Math.round(d.confidence * 100)}%)
+                    {(d.recommended_action ?? d.decision)} → {d.target_resolution ? `${d.target_resolution}p` : 'auto'} ({Math.round(d.confidence * 100)}%)
                   </Text>
                   <Text style={styles.logReason}>{d.reason}</Text>
                 </View>

@@ -5,8 +5,12 @@
 // ── SDK Configuration ────────────────────────────────────────
 
 export interface MobCloudXConfig {
-  /** Producer API base URL (e.g. http://10.0.2.2:3001) */
+  /** Legacy default API base URL. Used as producer URL unless overrides are set. */
   apiBaseUrl: string;
+  /** Producer API base URL (e.g. http://10.0.2.2:3001) */
+  producerApiBaseUrl?: string;
+  /** Inference API base URL (e.g. http://10.0.2.2:8000 or http://10.0.2.2:8000/api/v1) */
+  inferenceApiBaseUrl?: string;
   /** Telemetry push interval in ms (default: 3000) */
   telemetryIntervalMs?: number;
   /** Adaptation poll interval in ms (default: 5000) */
@@ -54,6 +58,28 @@ export interface BatteryInfo {
   isCharging: boolean;
 }
 
+export type DemoThrottleProfile = 'normal' | 'throttled' | 'blindspot' | 'recovery';
+
+export interface DemoThrottleState {
+  enabled: boolean;
+  profile: DemoThrottleProfile;
+  label: string;
+  startedAtMs?: number;
+  throughputMbps: number;
+  bufferMs: number;
+  congestionProbability: number;
+  networkType: NetworkInfo['type'];
+  cellularGeneration?: NetworkInfo['cellularGeneration'];
+  isConnected: boolean;
+  signalStrengthDbm?: number;
+  jitterMs?: number;
+  packetLossPct?: number;
+  droppedFrames?: number;
+  startupLatencyMs?: number;
+  outageCycleMs?: number;
+  outageDurationMs?: number;
+}
+
 export interface PlaybackMetrics {
   currentBitrate: number;
   bufferHealthMs: number;
@@ -82,6 +108,10 @@ export interface TelemetryPayload {
     cellular_generation?: string | null;
     is_connected?: boolean;
     signal_strength_dbm?: number;
+    jitter?: number;
+    audio_jitter_ms?: number;
+    audio_packet_loss_pct?: number;
+    av_sync_offset_ms?: number;
     // battery
     battery_level?: number;
     battery_charging?: boolean;
@@ -118,6 +148,18 @@ export interface QoEScore {
     output_quality_score?: number;
     stability_score?: number;
     calculation_method?: string;
+    startup_latency_score?: number;
+    rebuffer_score?: number;
+    bitrate_headroom_score?: number;
+    switch_stability_score?: number;
+    resolution_score?: number;
+    frame_score?: number;
+    network_score?: number;
+    startup_latency_ms?: number;
+    rebuffer_ratio?: number;
+    buffering_events?: number;
+    bitrate_switches?: number;
+    resolution_switches?: number;
   };
 }
 
@@ -129,6 +171,44 @@ export interface QoEState {
   lastUpdated: number;
 }
 
+export interface ZKProofRecord {
+  proof_id: string;
+  session_id: string;
+  proof_hash: string;
+  proof_mode: string;
+  verified: boolean;
+  sla_met: boolean;
+  algorithm: string;
+  public_signals: string[];
+  proof: Record<string, unknown>;
+  anchor?: {
+    status: string;
+    network?: string;
+    tx_hash?: string;
+    explorer_url?: string;
+    proof_hash?: string;
+    reason?: string;
+  } | null;
+  created_at: string;
+  ts: number;
+  payload: {
+    qoe_start: number;
+    qoe_minimum: number;
+    qoe_recovery: number;
+    stall_count: number;
+    session_duration: number;
+    sla_threshold: number;
+    max_stalls: number;
+    metadata?: Record<string, unknown>;
+  };
+}
+
+export interface ZKProofState {
+  status: 'idle' | 'pending' | 'generating' | 'anchored' | 'error';
+  latestProof: ZKProofRecord | null;
+  lastUpdated: number;
+}
+
 // ── Adaptation Types ─────────────────────────────────────────
 
 export interface AdaptationDecision {
@@ -136,6 +216,10 @@ export interface AdaptationDecision {
   target_resolution?: number;           // e.g. 480
   target_bitrate?: number;
   target_codec?: string;
+  congestion_probability?: number;
+  recommended_action?: 'normal' | 'prefetch_low_quality' | 'switch_to_cached' | 'upgrade';
+  prefetch_seconds?: number;
+  urgency?: 'normal' | 'warning' | 'critical';
   reason: string;
   confidence: number;                   // 0–1
   ts: number;
@@ -214,12 +298,16 @@ export interface SDKStore {
   networkInfo: NetworkInfo;
   batteryInfo: BatteryInfo;
   playbackMetrics: PlaybackMetrics | null;
+  demoThrottle: DemoThrottleState | null;
 
   // QoE
   qoe: QoEState;
 
   // Adaptation
   adaptation: AdaptationState;
+
+  // ZK
+  zkProof: ZKProofState;
 
   // Player
   player: PlayerState;
@@ -230,8 +318,10 @@ export interface SDKStore {
   updateNetworkInfo: (info: NetworkInfo) => void;
   updateBatteryInfo: (info: BatteryInfo) => void;
   updatePlaybackMetrics: (metrics: PlaybackMetrics) => void;
+  updateDemoThrottle: (state: DemoThrottleState | null) => void;
   updateQoE: (score: QoEScore) => void;
   updateAdaptation: (decision: AdaptationDecision) => void;
+  updateZKProof: (proof: ZKProofRecord | null, status?: ZKProofState['status']) => void;
   updatePlayerState: (state: Partial<PlayerState>) => void;
   reset: () => void;
 }

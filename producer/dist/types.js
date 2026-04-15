@@ -15,16 +15,19 @@ export const TrancodeEventSchema = z.object({
     ts: z.number().optional(),
     meta: z.record(z.any()).optional(),
 }).refine(data => {
-    const refinement = ['COMPLETED', 'FAILED'].includes(data.status);
-    if (refinement) {
+    if (data.status === 'COMPLETED') {
         if (typeof data.duration_ms !== 'number')
             return false;
-        if (data.outputs?.length === 0)
+        if (!Array.isArray(data.outputs) || data.outputs.length === 0)
+            return false;
+    }
+    if (data.status === 'FAILED') {
+        if (typeof data.duration_ms !== 'number')
             return false;
     }
     return true;
 }, {
-    message: "For status COMPLETED or FAILED, duration_ms must be a number and outputs must be a non-empty array",
+    message: "For status COMPLETED, duration_ms must be a number and outputs must be a non-empty array. For status FAILED, duration_ms must be a number.",
     path: ["duration_ms", "outputs"]
 });
 export const QoeSchema = z.object({

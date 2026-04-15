@@ -16,13 +16,6 @@ export function calculateTranscodingSpeedScore(metrics, transcodeInfo, videoPlay
     else
         return 25;
 }
-let messageStats = {
-    telemetry: 0,
-    transcode: 0,
-    qoe: 0,
-    qoe_calculated: 0,
-    errors: 0
-};
 export function calculateOutputQualityScore(metrics, transcodeInfo) {
     const outputCount = transcodeInfo.outputs?.length || 0;
     const expectedOutputs = 4; // Assume we expect at least 3 outputs for good quality
@@ -109,18 +102,18 @@ export function getQoeCategory(qoe) {
     else
         return 'Poor';
 }
-export function startStatsLogger() {
+export function startStatsLogger(stats) {
     setInterval(() => {
-        const total = messageStats.telemetry + messageStats.transcode + messageStats.qoe;
+        const total = stats.telemetry + stats.transcode + stats.qoe;
         if (total > 0) {
             console.log('\n' + '='.repeat(60));
             console.log('📈 Consumer Statistics');
             console.log('='.repeat(60));
-            console.log(`Telemetry:      ${messageStats.telemetry} messages`);
-            console.log(`Transcode:      ${messageStats.transcode} messages`);
-            console.log(`QoE Received:   ${messageStats.qoe} messages`);
-            console.log(`QoE Calculated: ${messageStats.qoe_calculated} scores`);
-            console.log(`Errors:         ${messageStats.errors}`);
+            console.log(`Telemetry:      ${stats.telemetry} messages`);
+            console.log(`Transcode:      ${stats.transcode} messages`);
+            console.log(`QoE Received:   ${stats.qoe} messages`);
+            console.log(`QoE Calculated: ${stats.qoe_calculated} scores`);
+            console.log(`Errors:         ${stats.errors}`);
             console.log(`Total:          ${total} messages processed`);
             console.log('='.repeat(60) + '\n');
         }

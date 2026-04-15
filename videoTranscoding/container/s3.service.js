@@ -31,11 +31,12 @@ export const config = {
     s3Client : createS3Client(),
     honoEndpoint: "http://host.docker.internal:3001",
     bucket:'video-transcoding-mob.mobcloudx.xyz',
-    key:'videos/video5.mp4',
+    key: process.env.S3_KEY || 'videos/input.mp4',
     productionBucket: process.env.S3_PRODUCTION_BUCKET || 'prod-video.mobcloudx.xyz',
     taskArn: 'arn:aws:ecs:us-east-1:925401939418:task-definition/Task:3',
     containerName:'video-transcoding-container',
     resolutions:[
+        { name: "360p", width: 640, height: 360 },
         { name: "480p", width: 854, height: 480 },
         { name: "720p", width: 1280, height: 720 },
         { name: "1080p", width: 1920, height: 1080 },
@@ -145,21 +146,28 @@ export async function downloadFromS3(){
 
 export async function uploadToS3(localPath, s3Key){
     const fileData = await fs.readFile(localPath);
-    
-    const command = new PutObjectCommand({
-        Bucket: config.productionBucket,
-        Key: s3Key,
-        Body: fileData,
-        ContentType: 'video/mp4',
-        ACL: 'public-read',
-    });
-    
-    await config.s3Client.send(command);
-    
+
+    await uploadBufferToS3(fileData, s3Key, 'video/mp4');
+
     return {
         size: fileData.length,
         key: s3Key
     };
+}
+
+export async function uploadBufferToS3(body, s3Key, contentType) {
+    const command = new PutObjectCommand({
+        Bucket: config.productionBucket,
+        Key: s3Key,
+        Body: body,
+        ContentType: contentType,
+    });
+
+    await config.s3Client.send(command);
+}
+
+export async function uploadTextToS3(text, s3Key, contentType = 'text/plain') {
+    await uploadBufferToS3(Buffer.from(text, 'utf8'), s3Key, contentType);
 }
 
 

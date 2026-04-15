@@ -52,6 +52,51 @@ services:
       timeout: 10s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: mcx-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - mcx-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: mcx-loki
+    ports:
+      - "3100:3100"
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./grafana/loki-config.yml:/etc/loki/local-config.yaml:ro
+    networks:
+      - mcx-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3100/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    container_name: mcx-promtail
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ./grafana/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      loki:
+        condition: service_healthy
+    networks:
+      - mcx-network
+    restart: unless-stopped
+
   # ── Application Services ──────────────────────────────────
   producer:
     build:
@@ -62,8 +107,11 @@ services:
       - "3001:3001"
     environment:
       KAFKA_BROKERS: kafka:9092
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       kafka:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - mcx-network
@@ -128,8 +176,8 @@ services:
 
   inference:
     build:
-      context: ./inference
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: inference/Dockerfile
     container_name: mcx-inference
     ports:
       - "8000:8000"
@@ -138,8 +186,26 @@ services:
       MONGO_DB: test
       INFERENCE_PORT: 8000
       PRODUCER_API_URL: http://mcx-producer:3001
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      STREAM_API_KEY: ${STREAM_API_KEY}
+      STREAM_API_SECRET: ${STREAM_API_SECRET}
+      WEBRTC_TELEMETRY_TOPIC: ${WEBRTC_TELEMETRY_TOPIC:-webrtc-telemetry}
+      WEBRTC_QOE_TOPIC: ${WEBRTC_QOE_TOPIC:-webrtc-qoe-scores}
+      WEBRTC_ADAPTATION_TOPIC: ${WEBRTC_ADAPTATION_TOPIC:-webrtc-adaptations}
+      WEBRTC_TELEMETRY_DLQ_TOPIC: ${WEBRTC_TELEMETRY_DLQ_TOPIC:-webrtc-telemetry-dlq}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      POLYGON_GOERLI_RPC: ${POLYGON_GOERLI_RPC}
+      ZK_WALLET_PRIVATE_KEY: ${ZK_WALLET_PRIVATE_KEY}
+      ZK_WALLET_ADDRESS: ${ZK_WALLET_ADDRESS}
+      ZK_SLA_THRESHOLD: ${ZK_SLA_THRESHOLD:-60.0}
+      ZK_MAX_STALLS: ${ZK_MAX_STALLS:-0}
     depends_on:
       producer:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - mcx-network
@@ -159,8 +225,8 @@ services:
     container_name: mcx-transcoder
     environment:
       S3_BUCKET: ${S3_BUCKET:-video-transcoding-mob.mobcloudx.xyz}
-      S3_KEY: ${S3_KEY:-videos/video5.mp4}
-      RESOLUTIONS: ${RESOLUTIONS:-480p,720p,1080p}
+      S3_KEY: ${S3_KEY:-videos/input.mp4}
+      RESOLUTIONS: ${RESOLUTIONS:-240p,360p,480p,720p,1080p}
       PRODUCER_URL: http://mcx-producer:3001
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
@@ -180,8 +246,31 @@ services:
     container_name: mcx-prometheus
     ports:
       - "9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=180d
+      - --web.enable-lifecycle
     volumes:
-      - ./observability-task/prometheus.yaml:/etc/prometheus/prometheus.yml
+      - ./observability-task/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ./observability-task/recording.rules.yml:/etc/prometheus/recording.rules.yml:ro
+      - ./observability-task/alerts.rules.yml:/etc/prometheus/alerts.rules.yml:ro
+      - prometheus-storage:/prometheus
+    networks:
+      - mcx-network
+    restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: mcx-cadvisor
+    privileged: true
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
     networks:
       - mcx-network
     restart: unless-stopped
@@ -197,14 +286,22 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
+      - grafana-storage:/var/lib/grafana
       - ./grafana/qoe-dashboard.json:/var/lib/grafana/dashboards/qoe-dashboard.json
+      - ./grafana/webrtc_dashboard.json:/var/lib/grafana/dashboards/webrtc_dashboard.json
       - ./grafana/dashboards/default.yml:/etc/grafana/provisioning/dashboards/default.yml
-      - ./grafana/datasources/mongodb.yaml:/etc/grafana/provisioning/datasources/prometheus.yaml
+      - ./grafana/datasources/mongodb.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
     depends_on:
       - prometheus
+      - cadvisor
+      - loki
     networks:
       - mcx-network
     restart: unless-stopped
+
+volumes:
+  grafana-storage:
+  prometheus-storage:
 
 networks:
   mcx-network:

@@ -12,6 +12,7 @@ import type {
   AdaptationFeedback,
   ApiResponse,
   QoEScore,
+  ZKProofRecord,
 } from '../types';
 
 class ApiService {
@@ -48,7 +49,15 @@ class ApiService {
         return response;
       },
       (error) => {
-        logger.warn(`← Error ${error.response?.status}: ${error.config?.url}`);
+        const status = error.response?.status;
+        const requestUrl = error.config?.url ?? '';
+        const baseUrl = error.config?.baseURL ?? this.baseUrl;
+        const code = error.code ?? 'UNKNOWN';
+        if (status === 404 && requestUrl.includes('/adaptation/decision/')) {
+          logger.debug(`← 404 ${requestUrl} (no adaptation decision yet)`);
+          return Promise.reject(error);
+        }
+        logger.warn(`← Error ${status ?? 'NETWORK'} ${code}: ${baseUrl}${requestUrl}`);
         return Promise.reject(error);
       }
     );
@@ -75,7 +84,7 @@ class ApiService {
       );
       return { ok: true, data: res.data };
     } catch (error: any) {
-      logger.error('Failed to send telemetry:', error.message);
+      logger.error(`Failed to send telemetry: ${error.message} (${error.config?.baseURL ?? this.baseUrl}/telemetry-service)`);
       return { ok: false, error: error.message };
     }
   }
@@ -116,7 +125,7 @@ class ApiService {
       if (error.response?.status === 404) {
         return { ok: true, data: undefined };
       }
-      logger.warn('Failed to poll adaptation:', error.message);
+      logger.warn(`Failed to poll adaptation: ${error.message} (${error.config?.baseURL ?? this.baseUrl}/adaptation/decision/${sessionId})`);
       return { ok: false, error: error.message };
     }
   }
@@ -164,6 +173,51 @@ class ApiService {
       return res.data?.ok === true;
     } catch {
       return false;
+    }
+  }
+
+  // ── ZK Proofs ─────────────────────────────────────────────
+
+  async generateZKProof(payload: {
+    session_id: string;
+    qoe_start?: number;
+    qoe_minimum?: number;
+    qoe_recovery?: number;
+    stall_count?: number;
+    session_duration?: number;
+    sla_threshold?: number;
+    max_stalls?: number;
+    metadata?: Record<string, unknown>;
+  }): Promise<ApiResponse<ZKProofRecord>> {
+    try {
+      const res = await this.getClient().post<{ success: boolean; proof: ZKProofRecord }>('/zk/generate-proof', payload);
+      return { ok: true, data: res.data.proof };
+    } catch (error: any) {
+      logger.error('Failed to generate ZK proof:', error.message);
+      return { ok: false, error: error.message };
+    }
+  }
+
+  async verifyZKProof(sessionId: string): Promise<ApiResponse<{ proof: ZKProofRecord; verification: { verified: boolean } }>> {
+    try {
+      const res = await this.getClient().post<{ success: boolean; proof: ZKProofRecord; verification: { verified: boolean } }>(
+        '/zk/verify-proof',
+        { session_id: sessionId }
+      );
+      return { ok: true, data: { proof: res.data.proof, verification: res.data.verification } };
+    } catch (error: any) {
+      logger.error('Failed to verify ZK proof:', error.message);
+      return { ok: false, error: error.message };
+    }
+  }
+
+  async getZKProof(sessionId: string): Promise<ApiResponse<ZKProofRecord>> {
+    try {
+      const res = await this.getClient().get<{ success: boolean; proof: ZKProofRecord }>(`/zk/session/${sessionId}`);
+      return { ok: true, data: res.data.proof };
+    } catch (error: any) {
+      logger.debug('ZK proof not available yet:', error.message);
+      return { ok: false, error: error.message };
     }
   }
 }

@@ -4,6 +4,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { type RefObject } from 'react';
+import { Platform } from 'react-native';
 import { captureRef } from 'react-native-view-shot';
 import { logger } from '../core/logger';
 
@@ -28,6 +29,11 @@ class FrameCaptureService {
    * @param onCapture — callback with base64 JPEG string
    */
   start(intervalMs: number, onCapture: (base64: string) => void): void {
+    if (Platform.OS === 'android') {
+      logger.debug('Frame capture disabled on Android to avoid native video rendering conflicts');
+      return;
+    }
+
     if (!this.playerRef) {
       logger.warn('Frame capture: no player ref set');
       return;

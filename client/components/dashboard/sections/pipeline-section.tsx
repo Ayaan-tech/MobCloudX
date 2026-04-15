@@ -1,38 +1,66 @@
-import { TrendingUp, Activity, CheckCircle2 } from "lucide-react"
+"use client"
+
+import { useEffect, useState } from "react"
+import { TrendingUp, CheckCircle2 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
-import { useState, useEffect } from "react"
+
+interface PipelineStage {
+  name: string
+  count: number
+  percent: number
+  detail: string
+}
+
+interface PipelineLink {
+  source: string
+  target: string
+  value: number
+}
+
+interface PipelineResponse {
+  success: boolean
+  stages: PipelineStage[]
+  links: PipelineLink[]
+  health: {
+    successRate: number
+    activeJobs: number
+    failedJobs: number
+    avgDurationMinutes: number
+    bottleneckCount: number
+  }
+}
 
 export default function PipelineSection() {
-  const [realJobCount, setRealJobCount] = useState<number | null>(null)
-  
+  const [data, setData] = useState<PipelineResponse | null>(null)
+
   useEffect(() => {
+    let mounted = true
+
     async function loadData() {
       try {
-        const res = await fetch("/api/jobs/recent?limit=100")
+        const res = await fetch("/api/pipeline", { cache: "no-store" })
         const json = await res.json()
-        if (json.success && json.jobs && json.jobs.length > 0) {
-          const completedCount = json.jobs.filter((j: any) => j.status === 'COMPLETED').length
-          setRealJobCount(completedCount > 0 ? completedCount : null)
+        if (mounted && json.success) {
+          setData(json)
         }
       } catch (e) {
         console.error("Failed to fetch pipeline stats", e)
       }
     }
+
     loadData()
+    const interval = setInterval(loadData, 15000)
+    return () => {
+      mounted = false
+      clearInterval(interval)
+    }
   }, [])
 
-  // Use real data if available, otherwise fallback to mock
-  const isMock = realJobCount === null
-  const baseCount = isMock ? 15609 : realJobCount
+  const stages = data?.stages ?? []
+  const links = data?.links ?? []
+  const maxLinkValue = Math.max(...links.map((link) => link.value), 1)
 
-  const stages = [
-    { name: "Ingestion", count: isMock ? "15,847 files" : `${baseCount + 2} files`, percent: "100%" },
-    { name: "Validation", count: isMock ? "15,795 passed" : `${baseCount + 1} passed`, percent: "99.7%" },
-    { name: "Transcoding", count: `${baseCount.toLocaleString()} completed`, percent: isMock ? "98.8%" : "100%" },
-    { name: "QoE Analysis", count: `${baseCount.toLocaleString()} analyzed`, percent: "100%" },
-    { name: "Delivery", count: `${baseCount.toLocaleString()} delivered`, percent: "100%" },
-  ]
   return (
     <div>
       <Card className="mb-8">
@@ -40,9 +68,41 @@ export default function PipelineSection() {
           <CardTitle className="text-lg font-medium">Pipeline Flow Visualization</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-96 bg-muted rounded-lg flex items-center justify-center text-muted-foreground">
-            Sankey Diagram (Plotly)
-          </div>
+          {stages.length === 0 ? (
+            <div className="h-96 bg-muted rounded-lg flex items-center justify-center text-muted-foreground">
+              Waiting for live pipeline events...
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-border bg-linear-to-br from-slate-950 via-slate-900 to-slate-950 p-6">
+              <div className="grid gap-4 lg:grid-cols-5">
+                {stages.map((stage, index) => (
+                  <div key={stage.name} className="relative">
+                    <div className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 shadow-lg shadow-sky-500/5">
+                      <div className="text-xs uppercase tracking-[0.22em] text-sky-200/70">{stage.name}</div>
+                      <div className="mt-3 text-3xl font-semibold text-white">{stage.count.toLocaleString()}</div>
+                      <div className="mt-2 text-sm text-slate-300">{stage.detail}</div>
+                      <div className="mt-4 h-2 rounded-full bg-slate-800">
+                        <div
+                          className="h-2 rounded-full bg-linear-to-r from-sky-500 via-cyan-400 to-emerald-400"
+                          style={{ width: `${Math.max(stage.percent, 4)}%` }}
+                        />
+                      </div>
+                      <div className="mt-2 text-xs text-slate-400">{stage.percent.toFixed(1)}% of active flow</div>
+                    </div>
+                    {index < stages.length - 1 && (
+                      <div className="hidden lg:flex items-center gap-2 absolute top-1/2 -right-9 translate-y-[-50%] w-16">
+                        <div
+                          className="h-2 rounded-full bg-linear-to-r from-cyan-400 to-sky-500"
+                          style={{ width: `${Math.max(((links[index]?.value ?? 0) / maxLinkValue) * 64, 18)}px` }}
+                        />
+                        <span className="text-[10px] text-slate-500">{links[index]?.value ?? 0}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -60,11 +120,11 @@ export default function PipelineSection() {
                   </div>
                   <div>
                     <div className="font-medium text-sm">{stage.name}</div>
-                    <div className="text-xs text-muted-foreground">{stage.count}</div>
+                    <div className="text-xs text-muted-foreground">{stage.detail}</div>
                   </div>
                 </div>
-                {!isMock && i === 2 && <CheckCircle2 className="w-4 h-4 text-green-500 mr-2" />}
-                <span className="text-sm font-semibold text-primary">{stage.percent}</span>
+                {i === 2 && <CheckCircle2 className="w-4 h-4 text-green-500 mr-2" />}
+                <span className="text-sm font-semibold text-primary">{stage.percent.toFixed(1)}%</span>
               </div>
             ))}
           </CardContent>
@@ -78,25 +138,33 @@ export default function PipelineSection() {
             <div>
               <div className="flex justify-between text-sm mb-2">
                 <span className="text-muted-foreground">Overall Success Rate</span>
-                <span className="font-medium text-primary">{isMock ? "98.5%" : "100%"}</span>
+                <span className="font-medium text-primary">{data?.health.successRate?.toFixed(1) ?? "0.0"}%</span>
               </div>
-              <Progress value={isMock ? 98.5 : 100} className="h-2" />
+              <Progress value={data?.health.successRate ?? 0} className="h-2" />
             </div>
 
             <div>
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-muted-foreground">Avg QoE Score</span>
-                <span className="font-medium">8.7/10</span>
+                <span className="text-muted-foreground">Active Pipeline Load</span>
+                <span className="font-medium">{data?.health.activeJobs ?? 0} jobs</span>
               </div>
-              <Progress value={87} className="h-2" />
+              <Progress value={Math.min((data?.health.activeJobs ?? 0) * 10, 100)} className="h-2" />
             </div>
 
             <div>
               <div className="flex justify-between text-sm mb-2">
-                <span className="text-muted-foreground">Processing Speed</span>
-                <span className="font-medium">2.3x realtime</span>
+                <span className="text-muted-foreground">Avg Job Duration</span>
+                <span className="font-medium">{data?.health.avgDurationMinutes?.toFixed(1) ?? "0.0"} min</span>
               </div>
-              <Progress value={76} className="h-2" />
+              <Progress value={Math.max(0, 100 - (data?.health.avgDurationMinutes ?? 0) * 10)} className="h-2" />
+            </div>
+
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span className="text-muted-foreground">Current Bottleneck</span>
+                <span className="font-medium">{data?.health.bottleneckCount ?? 0} jobs</span>
+              </div>
+              <Progress value={Math.min((data?.health.bottleneckCount ?? 0) * 10, 100)} className="h-2" />
             </div>
           </CardContent>
         </Card>

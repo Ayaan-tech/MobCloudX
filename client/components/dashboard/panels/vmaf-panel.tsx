@@ -130,39 +130,10 @@ export default function VMAFPanel() {
     return () => clearInterval(id)
   }, [fetchData])
 
-  // ── Fallback mock data if API is empty ───────────────────────
   const hasData = (data?.summary?.total ?? 0) > 0
-  const displayData = hasData ? data! : {
-    success: true,
-    summary: { total: 15430, avg: 86.4, min: 42, max: 98, median: 89 },
-    distribution: [
-      { range: "90-100", count: 8500 },
-      { range: "70-89", count: 4200 },
-      { range: "50-69", count: 1800 },
-      { range: "30-49", count: 700 },
-      { range: "0-29", count: 230 },
-    ],
-    resolutionStats: [
-      { resolution: "1080p", avg: 94.2, min: 85, max: 98, count: 5200 },
-      { resolution: "720p", avg: 85.5, min: 75, max: 92, count: 6100 },
-      { resolution: "480p", avg: 72.1, min: 55, max: 81, count: 4130 },
-    ],
-    qualityDistribution: {
-      excellent: 8500,
-      good: 4200,
-      fair: 1800,
-      poor: 930
-    },
-    recentScores: [
-      { sessionId: "sess-92a", vmaf_score: 95.2, resolution: "1080p", quality: "Excellent", ts: new Date(Date.now() - 5000).toISOString() },
-      { sessionId: "sess-11b", vmaf_score: 82.4, resolution: "720p", quality: "Good", ts: new Date(Date.now() - 15000).toISOString() },
-      { sessionId: "sess-88c", vmaf_score: 68.9, resolution: "480p", quality: "Fair", ts: new Date(Date.now() - 35000).toISOString() },
-      { sessionId: "sess-44d", vmaf_score: 91.1, resolution: "1080p", quality: "Excellent", ts: new Date(Date.now() - 60000).toISOString() },
-    ]
-  }
-
-  const summary = displayData.summary
-  const qualDist = displayData.qualityDistribution
+  const displayData = data
+  const summary = displayData?.summary ?? { total: 0, avg: 0, min: 0, max: 0, median: 0 }
+  const qualDist = displayData?.qualityDistribution ?? { excellent: 0, good: 0, fair: 0, poor: 0 }
   const totalQual = qualDist.excellent + qualDist.good + qualDist.fair + qualDist.poor
   const excellentPct = totalQual > 0 ? ((qualDist.excellent / totalQual) * 100).toFixed(1) : "0"
   const poorPct = totalQual > 0 ? ((qualDist.poor / totalQual) * 100).toFixed(1) : "0"
@@ -265,6 +236,10 @@ export default function VMAFPanel() {
               <div className="h-[280px] flex items-center justify-center text-muted-foreground text-sm">
                 Loading...
               </div>
+            ) : !displayData || displayData.distribution.length === 0 ? (
+              <div className="h-[280px] flex items-center justify-center text-muted-foreground text-sm">
+                No VMAF scores available yet.
+              </div>
             ) : (
               <ChartContainer config={vmafDistConfig} className="h-[280px] w-full">
                 <BarChart data={displayData.distribution} accessibilityLayer>
@@ -313,7 +288,7 @@ export default function VMAFPanel() {
       </div>
 
       {/* Per-Resolution Breakdown */}
-      {displayData.resolutionStats.length > 0 && (
+      {displayData && displayData.resolutionStats.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium">VMAF by Resolution</CardTitle>
@@ -356,7 +331,7 @@ export default function VMAFPanel() {
                 </tr>
               </thead>
               <tbody>
-                {displayData.recentScores.map((score, i) => (
+                {displayData?.recentScores?.map((score, i) => (
                   <tr key={i} className="border-b border-border/50 hover:bg-muted/50">
                     <td className="py-2 px-3 font-mono text-xs truncate max-w-[180px]">
                       {score.sessionId}
@@ -375,7 +350,7 @@ export default function VMAFPanel() {
                     </td>
                   </tr>
                 ))}
-                {displayData.recentScores.length === 0 && (
+                {(!displayData || displayData.recentScores.length === 0) && (
                   <tr>
                     <td colSpan={5} className="py-8 text-center text-muted-foreground">
                       No VMAF scores yet. Scores will appear after transcoding with VMAF enabled.

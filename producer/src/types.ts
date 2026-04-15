@@ -17,14 +17,16 @@ export const TrancodeEventSchema = z.object({
     ts: z.number().optional(),
     meta: z.record(z.any()).optional(),
 }).refine(data =>{
-    const refinement = ['COMPLETED', 'FAILED'].includes(data.status)
-    if(refinement){
-        if (typeof data.duration_ms !== 'number') return false; 
-        if (data.outputs?.length === 0) return false;
+    if (data.status === 'COMPLETED') {
+        if (typeof data.duration_ms !== 'number') return false;
+        if (!Array.isArray(data.outputs) || data.outputs.length === 0) return false;
+    }
+    if (data.status === 'FAILED') {
+        if (typeof data.duration_ms !== 'number') return false;
     }
     return true;
 },{
-    message: "For status COMPLETED or FAILED, duration_ms must be a number and outputs must be a non-empty array",
+    message: "For status COMPLETED, duration_ms must be a number and outputs must be a non-empty array. For status FAILED, duration_ms must be a number.",
     path: ["duration_ms", "outputs"]
 })
 
@@ -41,6 +43,10 @@ export const AdaptationDecisionSchema = z.object({
     target_resolution: z.number().optional(),
     target_bitrate: z.number().optional(),
     target_codec: z.string().optional(),
+    congestion_probability: z.number().min(0).max(1).optional(),
+    recommended_action: z.enum(['normal', 'prefetch_low_quality', 'switch_to_cached', 'upgrade']).optional(),
+    prefetch_seconds: z.number().int().nonnegative().optional(),
+    urgency: z.enum(['normal', 'warning', 'critical']).optional(),
     reason: z.string(),
     confidence: z.number().min(0).max(1),
     ts: z.number().optional(),

@@ -1,143 +1,497 @@
 {
-	"id": null,
-	"uid": "mobcloudx-prometheus",
-	"title": "MobCloudX Service Observability",
-	"tags": ["mobcloudx", "prometheus", "latency", "cpu", "memory"],
-	"timezone": "browser",
-	"schemaVersion": 39,
-	"version": 1,
-	"refresh": "10s",
-	"editable": true,
-	"graphTooltip": 0,
-	"time": {
-		"from": "now-1h",
-		"to": "now"
-	},
-	"panels": [
-		{
-			"id": 1,
-			"type": "stat",
-			"title": "P95 HTTP Latency (s)",
-			"gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
-			"datasource": { "type": "prometheus", "uid": "prometheus" },
-			"targets": [
-				{
-					"refId": "A",
-					"expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le))",
-					"legendFormat": "p95"
-				}
-			],
-			"fieldConfig": { "defaults": { "unit": "s", "decimals": 3 } }
-		},
-		{
-			"id": 2,
-			"type": "stat",
-			"title": "P55 HTTP Latency (s)",
-			"gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
-			"datasource": { "type": "prometheus", "uid": "prometheus" },
-			"targets": [
-				{
-					"refId": "A",
-					"expr": "histogram_quantile(0.55, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le))",
-					"legendFormat": "p55"
-				}
-			],
-			"fieldConfig": { "defaults": { "unit": "s", "decimals": 3 } }
-		},
-		{
-			"id": 3,
-			"type": "stat",
-			"title": "Producer RSS Memory",
-			"gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
-			"datasource": { "type": "prometheus", "uid": "prometheus" },
-			"targets": [
-				{
-					"refId": "A",
-					"expr": "producer_process_resident_memory_bytes",
-					"legendFormat": "producer"
-				}
-			],
-			"fieldConfig": { "defaults": { "unit": "bytes" } }
-		},
-		{
-			"id": 4,
-			"type": "stat",
-			"title": "Consumer RSS Memory",
-			"gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
-			"datasource": { "type": "prometheus", "uid": "prometheus" },
-			"targets": [
-				{
-					"refId": "A",
-					"expr": "consumer_process_resident_memory_bytes",
-					"legendFormat": "consumer"
-				}
-			],
-			"fieldConfig": { "defaults": { "unit": "bytes" } }
-		},
-		{
-			"id": 5,
-			"type": "timeseries",
-			"title": "HTTP Latency P95/P55 by Route",
-			"gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
-			"datasource": { "type": "prometheus", "uid": "prometheus" },
-			"targets": [
-				{
-					"refId": "A",
-					"expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, route))",
-					"legendFormat": "p95 {{route}}"
-				},
-				{
-					"refId": "B",
-					"expr": "histogram_quantile(0.55, sum(rate(http_server_request_duration_seconds_bucket[5m])) by (le, route))",
-					"legendFormat": "p55 {{route}}"
-				}
-			],
-			"fieldConfig": { "defaults": { "unit": "s", "decimals": 3 } }
-		},
-		{
-			"id": 6,
-			"type": "timeseries",
-			"title": "Request Rate by Route",
-			"gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
-			"datasource": { "type": "prometheus", "uid": "prometheus" },
-			"targets": [
-				{
-					"refId": "A",
-					"expr": "sum by (job, method, route, status_code) (rate(http_server_request_duration_seconds_count[5m]))",
-					"legendFormat": "{{job}} {{method}} {{route}} {{status_code}}"
-				}
-			],
-			"fieldConfig": { "defaults": { "unit": "reqps" } }
-		},
-		{
-			"id": 7,
-			"type": "timeseries",
-			"title": "Container CPU Usage (cAdvisor)",
-			"gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
-			"datasource": { "type": "prometheus", "uid": "prometheus" },
-			"targets": [
-				{
-					"refId": "A",
-					"expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name=~\".*mcx-(producer|consumer).*\"}[5m])) * 100",
-					"legendFormat": "{{name}}"
-				}
-			],
-			"fieldConfig": { "defaults": { "unit": "percent", "decimals": 2 } }
-		},
-		{
-			"id": 8,
-			"type": "timeseries",
-			"title": "Container Memory Usage (cAdvisor)",
-			"gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
-			"datasource": { "type": "prometheus", "uid": "prometheus" },
-			"targets": [
-				{
-					"refId": "A",
-					"expr": "container_memory_usage_bytes{name=~\".*mcx-(producer|consumer).*\"}",
-					"legendFormat": "{{name}}"
-				}
-			],
-			"fieldConfig": { "defaults": { "unit": "bytes" } }
-		}
-	]
+  "id": null,
+  "uid": "mobcloudx-prometheus",
+  "title": "MobCloudX OTT Transcoding Intelligence",
+  "tags": ["mobcloudx", "ott", "transcoding", "vmaf", "qoe", "prometheus"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "refresh": "15s",
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "gauge",
+      "title": "Latest OTT QoE Score",
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "ott_latest_qoe_score"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 50 },
+              { "color": "yellow", "value": 70 },
+              { "color": "green", "value": 85 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "gauge",
+      "title": "Latest VMAF Overall",
+      "gridPos": { "h": 7, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "ott_latest_vmaf_score_overall"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 60 },
+              { "color": "yellow", "value": 80 },
+              { "color": "green", "value": 93 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "bargauge",
+      "title": "Latest VMAF by Resolution",
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (resolution) (ott_latest_vmaf_score)"
+        }
+      ],
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 60 },
+              { "color": "yellow", "value": 80 },
+              { "color": "green", "value": 93 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "gauge",
+      "title": "Latest Job Duration",
+      "gridPos": { "h": 7, "w": 3, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "ott_latest_transcode_job_duration_ms"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "gauge",
+      "title": "Outputs per Job",
+      "gridPos": { "h": 7, "w": 3, "x": 21, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "ott_latest_transcode_outputs_count"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "max": 8
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Jobs Completed in Range",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(ott_transcode_jobs_completed_total[$__range]))"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "horizontal",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "bargauge",
+      "title": "Completed Outputs by Resolution",
+      "gridPos": { "h": 5, "w": 9, "x": 6, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (resolution) (increase(ott_transcode_resolution_completed_total[$__range]))"
+        }
+      ],
+      "options": {
+        "displayMode": "lcd",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "bargauge",
+      "title": "Kafka Lag by OTT Topic",
+      "gridPos": { "h": 5, "w": 9, "x": 15, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (topic) (kafka_consumer_message_lag_seconds{topic=~\"transcode.events|qoe.scores|vmaf.scores|telemetry.raw\"})"
+        }
+      ],
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 30 },
+              { "color": "red", "value": 120 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Producer OTT Ingest History",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (route) (increase(http_server_requests_total{job=\"producer\", route=~\"/(telemetry-service|transcode-event|qoe-score|vmaf-score)\"}[$__interval]))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Consumer OTT Topic History",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (topic) (increase(kafka_consumer_messages_processed_total{topic=~\"transcode.events|qoe.scores|vmaf.scores|telemetry.raw\"}[$__interval]))",
+          "legendFormat": "{{topic}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Resolution Completion History",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (resolution) (increase(ott_transcode_resolution_completed_total[$__interval]))",
+          "legendFormat": "{{resolution}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Latest Resolution Duration Snapshot",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (resolution) (ott_latest_transcode_resolution_duration_ms)",
+          "legendFormat": "{{resolution}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "bargauge",
+      "title": "Current CPU by Resolution",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (resolution) (ott_latest_telemetry_cpu_percent)"
+        }
+      ],
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "bargauge",
+      "title": "Current Memory by Resolution",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "avg by (resolution) (ott_latest_telemetry_memory_mb)"
+        }
+      ],
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decmbytes",
+          "min": 0
+        }
+      }
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Producer and Consumer RSS Memory",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "producer_process_resident_memory_bytes",
+          "legendFormat": "producer"
+        },
+        {
+          "refId": "B",
+          "expr": "consumer_process_resident_memory_bytes",
+          "legendFormat": "consumer"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Container CPU Usage",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 35 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name=~\".*mcx-(producer|consumer|transcoder).*\"}[5m])) * 100",
+          "legendFormat": "{{name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Container Memory Usage",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "container_memory_usage_bytes{name=~\".*mcx-(producer|consumer|transcoder).*\"}",
+          "legendFormat": "{{name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "OTT Route Latency P95",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "prometheus-default" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_request_duration_seconds_bucket{job=\"producer\", route=~\"/(telemetry-service|transcode-event|qoe-score|vmaf-score)\"}[5m])) by (le, route))",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3
+        }
+      }
+    }
+  ]
 }
