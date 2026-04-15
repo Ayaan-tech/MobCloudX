@@ -18,11 +18,58 @@ yarn-error.log
 .idea
 coverage
 .env
+
 # Logs
 logs
-/ml/webrtc/data/webrtc_synthetic_20k.h5
-webrtc_synthetic_20k.h5
 *.log
 .expo
 
+# Android build
 android
+
+# Python virtual environments
+myenv/
+venv/
+env/
+.venv/
+
+# External repositories (should be submodules if needed)
+realesgran/
+
+# Large data files and models
+*.h5
+*.hdf5
+*.pkl
+*.pth
+*.pt
+*.onnx
+*.pb
+*.tflite
+*.caffemodel
+*.weights
+*.bin
+*.safetensors
+
+# ML/AI specific
+ml/webrtc/data/
+inference/models/*.pkl
+inference/models/*.pt
+inference/models/*.pth
+inference/models/*.h5
+
+# Video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
+
+# Large datasets
+**/data/*.h5
+**/data/*.hdf5
+**/data/*.csv
+**/data/*.parquet
+
+# Temporary folders
+"New folder"

@@ -29,7 +29,7 @@ import { useSDKStore } from '../core/store';
 import { getInferenceApiBaseUrl } from '../core/api-config';
 import { SDKMode, useSDKContext } from '../sdk/core/SDKContext';
 import { KafkaPublisher } from '../sdk/core/KafkaPublisher';
-import { DemoThrottleSimulator, type ThrottleLevel } from '../sdk/webrtc/DemoThrottleSimulator';
+import { DemoThrottleSimulator } from '../sdk/webrtc/DemoThrottleSimulator';
 import { FSMState } from '../sdk/webrtc/FSM';
 import { FLWeightsAgent } from '../sdk/webrtc/FLWeightsAgent';
 import { PerformanceProfiler } from '../sdk/webrtc/PerformanceProfiler';
@@ -39,6 +39,9 @@ import { getResolutionLabel } from '../sdk/webrtc/WebRTCQoEModel';
 import { WebRTCTelemetryAgent } from '../sdk/webrtc/WebRTCTelemetryAgent';
 import { CongestionPredictor } from '../sdk/webrtc/CongestionPredictor';
 import { WebRTCAdaptationController } from '../sdk/webrtc/WebRTCAdaptationController';
+import { RealWebRTCThrottleController } from '../sdk/webrtc/throttle/RealWebRTCThrottleController';
+import { WEBRTC_OS_THROTTLE_SCENARIOS, WEBRTC_THROTTLE_LEVELS } from '../sdk/webrtc/throttle/scenarios';
+import type { ThrottleLevel, WebRTCThrottleSource } from '../sdk/webrtc/throttle/types';
 import type {
   CongestionPrediction,
   FLSessionSummaryPayload,
@@ -49,7 +52,9 @@ import type {
 import { EMPTY_WEBRTC_METRICS, useWebRTCStore, webrtcEventEmitter } from '../store/webrtcStore';
 
 const DEMO_MODE_ENABLED = __DEV__ || process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
-const DEMO_THROTTLE_LEVELS = Object.keys(DemoThrottleSimulator.LEVELS) as ThrottleLevel[];
+const WEBRTC_REAL_THROTTLE_ENABLED = process.env.EXPO_PUBLIC_WEBRTC_OS_THROTTLE !== 'false';
+const WEBRTC_THROTTLE_CONTROL_URL =
+  process.env.EXPO_PUBLIC_WEBRTC_THROTTLE_CONTROL_URL?.replace(/\/$/, '') ?? 'http://10.0.2.2:8787';
 
 interface TokenResponse {
   token: string;
@@ -288,6 +293,10 @@ function DemoControlsPanel({
   isExpanded,
   onToggle,
   throttleLevel,
+  throttleSource,
+  throttleStatusMessage,
+  throttleVerification,
+  isApplyingThrottle,
   onSelectThrottle,
   participants,
   selectedParticipantId,
@@ -303,6 +312,10 @@ function DemoControlsPanel({
   isExpanded: boolean;
   onToggle: () => void;
   throttleLevel: ThrottleLevel;
+  throttleSource: WebRTCThrottleSource;
+  throttleStatusMessage: string | null;
+  throttleVerification: string | null;
+  isApplyingThrottle: boolean;
   onSelectThrottle: (level: ThrottleLevel) => void;
   participants: ParticipantQoE[];
   selectedParticipantId: string | null;
@@ -329,13 +342,14 @@ function DemoControlsPanel({
         <>
           <Text style={styles.demoLabel}>Throttle Level</Text>
           <View style={styles.demoSegmentRow}>
-            {DEMO_THROTTLE_LEVELS.map((level) => (
+            {WEBRTC_THROTTLE_LEVELS.map((level) => (
               <Pressable
                 key={level}
                 style={[
                   styles.demoSegment,
                   throttleLevel === level ? styles.demoSegmentActive : null,
                 ]}
+                disabled={isApplyingThrottle}
                 onPress={() => onSelectThrottle(level)}
               >
                 <Text
@@ -348,6 +362,24 @@ function DemoControlsPanel({
                 </Text>
               </Pressable>
             ))}
+          </View>
+
+          <View style={styles.demoReactionCard}>
+            <Text style={styles.demoReactionTitle}>Throttle Runtime</Text>
+            <View style={styles.demoReactionRow}>
+              <Text style={styles.demoReactionLabel}>Source</Text>
+              <Text style={styles.demoReactionValue}>{throttleSource}</Text>
+            </View>
+            <View style={styles.demoReactionRow}>
+              <Text style={styles.demoReactionLabel}>Status</Text>
+              <Text style={styles.demoReactionValue}>
+                {isApplyingThrottle ? 'Applying scenario...' : throttleStatusMessage ?? '--'}
+              </Text>
+            </View>
+            <View style={styles.demoReactionRow}>
+              <Text style={styles.demoReactionLabel}>Verification</Text>
+              <Text style={styles.demoReactionValue}>{throttleVerification ?? '--'}</Text>
+            </View>
           </View>
 
           <Text style={styles.demoLabel}>Apply To Participant</Text>
@@ -457,10 +489,23 @@ export default function CallScreen(): JSX.Element {
   const [isProfiling, setIsProfiling] = useState(false);
   const [isDemoPanelExpanded, setIsDemoPanelExpanded] = useState(false);
   const [demoThrottleLevel, setDemoThrottleLevel] = useState<ThrottleLevel>('NONE');
+  const [throttleSource, setThrottleSource] = useState<WebRTCThrottleSource>('none');
+  const [throttleStatusMessage, setThrottleStatusMessage] = useState<string | null>('Ready');
+  const [throttleVerification, setThrottleVerification] = useState<string | null>(null);
+  const [isApplyingThrottle, setIsApplyingThrottle] = useState(false);
   const [demoParticipantId, setDemoParticipantId] = useState<string | null>(null);
   const [lastWarningByParticipant, setLastWarningByParticipant] = useState<Record<string, number>>({});
   const kafkaPublisher = useMemo(() => new KafkaPublisher(), []);
-  const demoThrottleRef = useRef(new DemoThrottleSimulator());
+  const demoThrottleRef = useRef(
+    new RealWebRTCThrottleController({
+      controlPlaneBaseUrl: WEBRTC_THROTTLE_CONTROL_URL,
+      realModeEnabled: WEBRTC_REAL_THROTTLE_ENABLED,
+      fallbackEnabled: true,
+      fallbackSimulator: new DemoThrottleSimulator(),
+      requestTimeoutMs: 5000,
+    })
+  );
+  const throttleVerificationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const performanceProfilerRef = useRef(new PerformanceProfiler());
   const telemetryAgentsRef = useRef<Map<string, WebRTCTelemetryAgent>>(new Map());
   const predictorsRef = useRef<Map<string, CongestionPredictor>>(new Map());
@@ -493,6 +538,78 @@ export default function CallScreen(): JSX.Element {
   );
   const compactLayout = screenWidth < 420;
   const callSurfaceHeight = Math.max(320, Math.min(screenHeight * 0.42, 460));
+
+  const runThrottleVerification = (level: ThrottleLevel, participantId: string | null) => {
+    if (!participantId || level === 'NONE') {
+      setThrottleVerification(null);
+      return;
+    }
+
+    const baselineParticipant = useWebRTCStore.getState().participants.get(participantId);
+    if (!baselineParticipant) {
+      setThrottleVerification('Verification skipped: participant metrics unavailable.');
+      return;
+    }
+
+    const baseline = baselineParticipant.latestMetrics;
+    const scenario = WEBRTC_OS_THROTTLE_SCENARIOS[level];
+    if (!scenario) {
+      setThrottleVerification('Verification skipped: scenario not found.');
+      return;
+    }
+
+    if (throttleVerificationTimeoutRef.current) {
+      clearTimeout(throttleVerificationTimeoutRef.current);
+    }
+
+    throttleVerificationTimeoutRef.current = setTimeout(() => {
+      const updatedParticipant = useWebRTCStore.getState().participants.get(participantId);
+      if (!updatedParticipant) {
+        setThrottleVerification('Verification failed: participant left before probe.');
+        return;
+      }
+
+      const latest = updatedParticipant.latestMetrics;
+      const metricDelta = {
+        rtt: baseline.currentRoundTripTime > 0
+          ? ((latest.currentRoundTripTime - baseline.currentRoundTripTime) / baseline.currentRoundTripTime) * 100
+          : 0,
+        packet_loss: baseline.packetLossRate > 0
+          ? ((latest.packetLossRate - baseline.packetLossRate) / baseline.packetLossRate) * 100
+          : latest.packetLossRate > baseline.packetLossRate
+            ? 100
+            : 0,
+        bitrate: baseline.videoBitrateKbps > 0
+          ? ((latest.videoBitrateKbps - baseline.videoBitrateKbps) / baseline.videoBitrateKbps) * 100
+          : 0,
+        freeze: baseline.freezeRatePerMin > 0
+          ? ((latest.freezeRatePerMin - baseline.freezeRatePerMin) / baseline.freezeRatePerMin) * 100
+          : latest.freezeRatePerMin > baseline.freezeRatePerMin
+            ? 100
+            : 0,
+      };
+
+      const passedChecks = scenario.expectedChanges.filter((expected) => {
+        const observed = metricDelta[expected.metric];
+        if (expected.direction === 'increase') {
+          return observed >= expected.minDeltaPct;
+        }
+
+        return observed <= -expected.minDeltaPct;
+      });
+
+      if (passedChecks.length === scenario.expectedChanges.length) {
+        setThrottleVerification(
+          `Verified (${passedChecks.length}/${scenario.expectedChanges.length}) with real metric movement.`
+        );
+        return;
+      }
+
+      setThrottleVerification(
+        `Partial verification (${passedChecks.length}/${scenario.expectedChanges.length}); check host shaping settings.`
+      );
+    }, 6500);
+  };
 
   const endSessionOnServer = async (
     activeSessionId: string | null
@@ -638,6 +755,7 @@ export default function CallScreen(): JSX.Element {
       if (participantId === localParticipantIdRef.current && receiverSrAgentRef.current) {
         telemetryAgent.setSRAgent(receiverSrAgentRef.current);
       }
+      telemetryAgent.setThrottleMetadataProvider(() => demoThrottleRef.current.getTelemetryMetadata());
       telemetryAgent.start();
       telemetryAgentsRef.current.set(participantId, telemetryAgent);
       registerAgent({
@@ -659,9 +777,7 @@ export default function CallScreen(): JSX.Element {
       predictor.startAutoPredict(
         () => {
           const baseMetrics = telemetryAgent.getLatestMetrics();
-          return DEMO_MODE_ENABLED
-            ? demoThrottleRef.current.interceptMetrics(baseMetrics, participantId)
-            : baseMetrics;
+          return demoThrottleRef.current.interceptMetrics(baseMetrics, participantId);
         },
         (prediction) => {
           telemetryAgent.setLatestPrediction(prediction);
@@ -957,8 +1073,11 @@ export default function CallScreen(): JSX.Element {
 
       adaptationControllersRef.current.clear();
       localParticipantIdRef.current = null;
-      demoThrottleRef.current.deactivate();
+      void demoThrottleRef.current.reset();
       demoThrottleRef.current.setTargetParticipant(null);
+      if (throttleVerificationTimeoutRef.current) {
+        clearTimeout(throttleVerificationTimeoutRef.current);
+      }
       void receiverSrAgentRef.current?.destroy();
       receiverSrAgentRef.current = null;
 
@@ -979,9 +1098,7 @@ export default function CallScreen(): JSX.Element {
           participantId === localParticipantIdRef.current && receiverSrAgentRef.current
             ? receiverSrAgentRef.current.enrichMetrics(agent.getLatestMetrics(), fsmState)
             : agent.getLatestMetrics();
-        const metrics = DEMO_MODE_ENABLED
-          ? demoThrottleRef.current.interceptMetrics(realMetrics, participantId)
-          : realMetrics;
+        const metrics = demoThrottleRef.current.interceptMetrics(realMetrics, participantId);
         actions.updateParticipantMetrics(participantId, metrics);
         if (participantId !== localParticipantIdRef.current || !flWeightsAgentRef.current) {
           return;
@@ -1014,8 +1131,11 @@ export default function CallScreen(): JSX.Element {
     });
     predictorsRef.current.clear();
     adaptationControllersRef.current.clear();
-    demoThrottleRef.current.deactivate();
+    void demoThrottleRef.current.reset();
     demoThrottleRef.current.setTargetParticipant(null);
+    if (throttleVerificationTimeoutRef.current) {
+      clearTimeout(throttleVerificationTimeoutRef.current);
+    }
     void receiverSrAgentRef.current?.destroy();
     receiverSrAgentRef.current = null;
 
@@ -1033,13 +1153,31 @@ export default function CallScreen(): JSX.Element {
   }, [errorMessage]);
 
   const handleSelectThrottleLevel = (level: ThrottleLevel) => {
-    setDemoThrottleLevel(level);
-    if (level === 'NONE') {
-      demoThrottleRef.current.deactivate();
+    if (isApplyingThrottle) {
       return;
     }
 
-    demoThrottleRef.current.activate(level);
+    setIsApplyingThrottle(true);
+    setThrottleVerification(null);
+
+    void (async () => {
+      try {
+        setDemoThrottleLevel(level);
+        const result = await demoThrottleRef.current.applyLevel(level, sessionId);
+        setThrottleSource(result.source);
+        setThrottleStatusMessage(result.message);
+
+        if (result.source === 'os_real' && level !== 'NONE') {
+          runThrottleVerification(level, demoParticipantId);
+        }
+
+        if (result.source !== 'os_real' && level !== 'NONE') {
+          setThrottleVerification('Fallback mode active. Start the host controller for real OS throttling.');
+        }
+      } finally {
+        setIsApplyingThrottle(false);
+      }
+    })();
   };
 
   const handleSelectDemoParticipant = (participantId: string) => {
@@ -1048,9 +1186,16 @@ export default function CallScreen(): JSX.Element {
   };
 
   const handleResetDemo = () => {
-    demoThrottleRef.current.deactivate();
+    void demoThrottleRef.current.reset();
     demoThrottleRef.current.setTargetParticipant(null);
     setDemoThrottleLevel('NONE');
+    setThrottleSource('none');
+    setThrottleStatusMessage('Reset to baseline conditions.');
+    setThrottleVerification(null);
+    if (throttleVerificationTimeoutRef.current) {
+      clearTimeout(throttleVerificationTimeoutRef.current);
+      throttleVerificationTimeoutRef.current = null;
+    }
     setLastWarningByParticipant({});
   };
 
@@ -1199,6 +1344,10 @@ export default function CallScreen(): JSX.Element {
                   isExpanded={isDemoPanelExpanded}
                   onToggle={() => setIsDemoPanelExpanded((current) => !current)}
                   throttleLevel={demoThrottleLevel}
+                  throttleSource={throttleSource}
+                  throttleStatusMessage={throttleStatusMessage}
+                  throttleVerification={throttleVerification}
+                  isApplyingThrottle={isApplyingThrottle}
                   onSelectThrottle={handleSelectThrottleLevel}
                   participants={demoParticipants}
                   selectedParticipantId={demoParticipantId}
