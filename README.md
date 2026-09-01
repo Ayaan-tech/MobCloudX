@@ -13,6 +13,19 @@ The platform is built around a multi-agent AI architecture running both on-devic
 
 ---
 
+## 🎬 Working Demo
+
+> **Watch the full working demo of MobCloudX:**  
+> [![MobCloudX Working Demo](https://drive.google.com/thumbnail?id=1HaAmv-IDSXjcTu4e-DEjqrGd5qYRu3Rk&sz=w1280)](https://drive.google.com/file/d/1HaAmv-IDSXjcTu4e-DEjqrGd5qYRu3Rk/view?usp=sharing)
+>
+> **▶️ [Open the full demo video on Google Drive](https://drive.google.com/file/d/1HaAmv-IDSXjcTu4e-DEjqrGd5qYRu3Rk/view?usp=sharing)**
+>
+> The demo showcases the end-to-end MobCloudX workflow, including the Android SDK,
+> real-time telemetry and QoE monitoring, adaptive streaming decisions,
+> backend inference, and the live dashboard.
+
+---
+
 ## Architecture Overview
 
 ```
@@ -126,6 +139,14 @@ Cryptographic proof of service quality for OTT platforms and SLA enforcement:
 📊 **Full Observability Stack** — Grafana dashboards, Prometheus metrics, Loki logs  
 🎬 **VMAF Quality Scoring** — perceptual video quality validation (0-100 scale)  
 🧪 **Demo Mode System** — network simulator (3G/4G/WiFi-6) for testing adaptation logic
+
+---
+
+## 🎥 Demo Video
+
+[**▶️ View the MobCloudX working demo**](https://drive.google.com/file/d/1HaAmv-IDSXjcTu4e-DEjqrGd5qYRu3Rk/view?usp=sharing)
+
+The preview above links directly to the full-resolution demo hosted on Google Drive.
 
 ---
 
